@@ -46,6 +46,26 @@ def log_posterior_probs(x):
     log_p = np.zeros(3)
 
     for (i, (prior, hypothesis)) in enumerate(zip(PRIOR_PROBS, HYPOTHESIS_SPACE)):
+        """ Implementation of bayes likelihood eqn
+        Given PDFs $p_{X|D}(x|1), p_{X|D}(x|2), p_{X|D}(x|3)$ with data $X$ and distribution $D$,
+        we write $p_{D|X} = p_{X|D} * p_D / p_X$ (product rule). In order to prevent numerical underflow, we compute probabilities in log space and
+        take the exponential in the end, i.e. we compute $\exp{\log{p_{X|D}}} = \exp{\log{p_{D|X}} + \log{p_X} - \log{p_D}}$.
+        Notice now that $p_D$ is given by the problem description. To compute $p_X$, we can use the marginalization rule:
+        $p_X = \sum_{j \in D} p_{X|D}(_|j) * p_D(j)$.
+
+        Next, we expand $p_{X|D}$ as $\prod_i p_{X|D}(x_i|D)$, s.t. when taking the logarithm, we get $\log{p_{X|D} = \sum_i \log{p_{X|D}(x_i|D)}}$.
+        We do this both for the enumerator and the denominator. Finally, we inject an identity $\exp{\log{\cdot}}$, such that we can use the logexpsum trick.
+        More precisely, for $p_X$ we write 
+        $$
+        \begin{aligned}
+        \log{p_X} &= \log{\sum_j \[p_{X|D}(\cdot|j)\]p_D(j) } \\
+                  &= \log{\sum \[ \prod_i p_{X|D}(x_i|j) \] p_D(j)} \\
+                  &= \log{\sum \[ \exp{\log{ \[ \prod_i p_{X|D}(x_i|j) \]}} \] p_D(j) } \\
+                  &= \log{\sum_j \[ \exp \[ \sum_i \log(p_{X|D}(x_i|j)) \] p_D(j)\]}
+        \end{aligned}
+        $$
+        Note that in the last equation, we can use the logsumexp trick for the outer logarithm.
+        """
         log_p[i] = hypothesis.logpdf(x).sum() + np.log(prior) \
                  - logsumexp([hypothesis_normalize.logpdf(x).sum() for hypothesis_normalize in HYPOTHESIS_SPACE],
                              b=PRIOR_PROBS)
