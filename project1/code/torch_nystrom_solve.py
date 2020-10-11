@@ -36,7 +36,7 @@ def nystrom_solve(X, t, m, sigma, k, compute_error=False):
     # Solve linear system (see eq. (11))
     Lambda = torch.diag(Lambda)
     y = Lambda @ U.T @ t
-    z, lu_m = torch.solve(y.unsqueeze(1), Lambda @ U.T @ U + sigma * torch.eye(m))
+    z, _ = torch.solve(y, Lambda @ U.T @ U + sigma * torch.eye(m))
     alpha = 1.0 / sigma * (t - U @ z)
 
     if compute_error:
@@ -44,7 +44,7 @@ def nystrom_solve(X, t, m, sigma, k, compute_error=False):
         Knn = torch.zeros(n, n, dtype=dtype)
         for (i, j) in product(torch.arange(n), torch.arange(n)):
             Knn[i, j] = k(Xp[i, :], Xp[j, :])
-        alpha_true, lu_n = torch.solve(t.unsqueeze(1), Knn + sigma * torch.eye(n))
+        alpha_true, _ = torch.solve(t, Knn + sigma * torch.eye(n))
         print(torch.norm(alpha - alpha_true).item())
 
     return alpha
@@ -53,7 +53,7 @@ if __name__ == '__main__':
     dtype = torch.float64
     n = 1000
     X = torch.rand(n, 2, dtype=dtype)
-    t = torch.ones(n, dtype=dtype)
+    t = torch.ones(n, 1, dtype=dtype)
     m = 100
     sigma = 1e-1
     k = lambda x, y : torch.exp(-torch.norm(x - y)**2).item()
