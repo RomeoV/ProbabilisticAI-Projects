@@ -12,31 +12,29 @@ def nystrom_solve(X, t, m, sigma, k, compute_error=False):
 
     """
 
+    # Randomly shuffle X
     n = X.shape[0]
     perm = np.random.permutation(n)
     Xp = X[perm, :]
-    Xm = Xp[:m, :]
 
     # Compute reduced kernel matrix
-    Kmn = np.zeros((m, n))
-    for (i, j) in product(np.arange(m), np.arange(n)):
-        Kmn[i, j] = k(Xm[i, :], Xp[j, :])
-    Kmm = Kmn[:, :m]
+    Knm = np.zeros((n, m))
+    for (i, j) in product(np.arange(n), np.arange(m)):
+        Knm[i, j] = k(Xp[i, :], Xp[j, :])
 
-    # Eq 7
-    Lambda_m, U_m = np.linalg.eig(Kmm)
+    # Compute eigen-decomposition (see eq. (7))
+    Lambda_m, U_m = np.linalg.eig(Knm[:m, :])
 
-    # Eq 8
-    Lambda = n / m * Lambda_m
+    # Compute approximate eigenvalues (see eq. (8))
+    Lambda = (n / m) * Lambda_m
 
-    # Eq 9
-    U = np.sqrt(m / n) * Kmn.T @ U_m @ np.diag( 1.0 / Lambda_m )
+    # Compute approximate eigenvectors (see eq. (9))
+    U = np.sqrt(m / n) * Knm @ U_m @ np.diag( 1.0 / Lambda_m )
 
-    # Eq 11
+    # Solve linear system (see eq. (11))
     Lambda = np.diag(Lambda)
-    Im = np.eye(m)
     y = Lambda @ U.T @ t
-    z = np.linalg.solve(sigma * Im + Lambda @ U.T @ U, y)
+    z = np.linalg.solve(Lambda @ U.T @ U + sigma * np.eye(m), y)
     alpha = 1 / sigma * (t - U @ z)
 
     if compute_error:
@@ -56,4 +54,4 @@ if __name__ == '__main__':
     m = 100
     sigma = 1e-1
     k = lambda x, y : np.exp(-np.linalg.norm(x - y)**2)
-    alpha = nystrom_solve(X, t, m, sigma, k, compute_error=False)
+    alpha = nystrom_solve(X, t, m, sigma, k, compute_error=True)
