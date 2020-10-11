@@ -60,40 +60,56 @@ class Model():
 
     def __init__(self):
         """
-            TODO: enter your code here
+        Sets some hyperparams:
+            - sigma (prior std deviation)
+            - kernel + it's hyperparams
         """
 
         self.PRIOR_CONST: float  # is computed in fit later
         self.SIGMA = 0.05  # hyperparam
         self.kernel = gpt.kernels.RBFKernel();  # later, put hyperparams here
 
-        pass
+        self.already_fitted = False
 
     def prior_func(self, x: torch.tensor) -> torch.tensor:
         return self.PRIOR_CONST * torch.ones(x.shape[0])
 
     def predict(self, test_x):
+        """ Predict outcome for test data
+        
+        See equations from :func:`Model.fit_model`
+        We compute the kernel combinations from our test_x with our train_x and add our prior.
         """
-            TODO: enter your code here
-        """
+        assert already_fitted, "Model has to be fitted first!"
         k_xA = self.kernel(test_x, self.train_x).evaluate()
         mu = self.prior_func(test_x) + (k_xA @ self.alpha).squeeze(1)
         return mu
 
     def fit_model(self, train_x, train_y):
+        """ Computes Kernel inverse for training data
+
+        See PAI slideset 3, page 32
+        $\mu'(x) = \mu(x) + k_{x,A} (K_{AA} + \sigma^2 I)^{-1} (y_A - \mu_A)$
+
+        First, we compute our data prior.
+        Then, we store our training inputs (xs) to compute $k_{x,A}$, later.
+        Then, we compute the (approximate) inverse to the Kernel matrix + prior.
+        The problem is that the kernel matrix might be too large to fit into memory (or even invert).
+        For this, we potentially employ some approximation, like the nystrom method.
+        The inverse times the label data is stored in `self.alpha`.
         """
-             TODO: enter your code here
-        """
+
         N = train_x.shape[0]
         self.train_x = train_x
         self.PRIOR_CONST = train_y.median();
         mu_A = self.prior_func(train_x)
         K_plus_sigma = self.kernel(train_x, train_x).evaluate() + self.SIGMA**2 * torch.eye(N)
         self.alpha, _ = torch.solve((train_y - mu_A).unsqueeze(1), K_plus_sigma)  # replace with e.g. nystrom
-        #import IPython; IPython.embed(); IPython.exit()
+
+        self.already_fitted = True
 
 
-def plot(train_x, train_y, test_x, pred_y):
+def plot_predictions(train_x, train_y, test_x, pred_y):
     pred_y = pred_y.detach().numpy()
 
     plt.scatter(train_x[:,0], train_x[:,1], c=train_y, marker='o')
@@ -105,7 +121,7 @@ def main():
     train_x_name = "train_x.csv"
     train_y_name = "train_y.csv"
 
-    train_x = torch.tensor(np.loadtxt(train_x_name, delimiter=','))
+    train_x = torchtensor(np.loadtxt(train_x_name, delimiter=','))
     train_y = torch.tensor(np.loadtxt(train_y_name, delimiter=','))
 
     ind = torch.randperm(train_x.shape[0])
@@ -125,7 +141,7 @@ def main():
     prediction = M.predict(test_x)
 
     print(prediction)
-    plot(train_x, train_y, test_x, prediction)
+    plot_predictions(train_x, train_y, test_x, prediction)
 
 
 if __name__ == "__main__":
