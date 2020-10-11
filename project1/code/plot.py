@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 def plot_scatter():
-   train_x_name = "train_x.csv"
+    train_x_name = "train_x.csv"
     train_y_name = "train_y.csv"
 
     train_x = np.loadtxt(train_x_name, delimiter=',')
