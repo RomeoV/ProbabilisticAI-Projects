@@ -1,5 +1,13 @@
-numpy==1.19.1
-scipy==1.5.1
-pyarmor==6.3.3
+cffi==1.14.3
 cryptography==3.0
-scikit-learn==0.23
+future==0.18.2
+gpytorch==1.2.0
+joblib==0.17.0
+numpy==1.19.1
+pyarmor==6.3.3
+pycparser==2.20
+scikit-learn==0.23.0
+scipy==1.5.1
+six==1.15.0
+threadpoolctl==2.1.0
+torch==1.6.0
