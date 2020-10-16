@@ -62,10 +62,10 @@ class Model:
         self.BHM: BlazingHotModel
 
     def fit_model(self, train_x, train_y):
-        self.BHM = BlazingHotModel(train_x, train_y)
+        self.BHM = BlazingHotModel(torch.tensor(train_x), torch.tensor(train_y))
 
     def predict(self, test_x):
-        predictions = self.BHM(test_x).mean.detach()
+        predictions = self.BHM(torch.tensor(test_x)).mean.detach()
         return predictions.numpy()
 
 
@@ -81,6 +81,15 @@ class BlazingHotModel(gpt.models.ExactGP):
         self.likelihood = likelihood
         self.mean_module = gpt.means.ConstantMean()
         self.covar_module = gpt.kernels.ScaleKernel(gpt.kernels.RBFKernel())
+
+        hypers = {
+            'likelihood.noise_covar.noise': torch.tensor(1.),
+            'mean_module.constant': torch.tensor(0.8),
+            'covar_module.base_kernel.lengthscale': torch.tensor(0.5),
+            'covar_module.outputscale': torch.tensor(2.),
+        }
+
+        self.initialize(**hypers)
 
         self.fit_model(train_x, train_y, training_iter=20)
         self.eval()
