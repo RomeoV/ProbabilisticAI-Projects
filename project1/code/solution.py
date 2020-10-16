@@ -1,14 +1,16 @@
 import numpy as np
-from GPmodels import RandomFeatureGP
 from GPmodels import ExactGP
+from GPmodels import RandomFeatureGP
+from gpytorch.kernels.rff_kernel import RFFKernel
 
 
 import gpytorch as gpt
 import torch
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 torch.set_default_tensor_type(torch.DoubleTensor)
 torch.autograd.set_detect_anomaly(True)
 
+RUN_DOCKER = True
 # Constant for Cost function
 THRESHOLD = 0.5
 W1 = 1
@@ -55,7 +57,7 @@ class Model():
     def __init__(self):
         self.learning_rate = 0.1
 
-        self.kernels = ["RBF"]
+        self.kernels = "RFF"
         self.composition = None
 
         self.lengthscale = [0.1]
@@ -70,10 +72,37 @@ class Model():
             TODO: enter your code here
         """
         test_x = torch.from_numpy(test_x)
-        self.model.eval()
-        y = self.model(test_x).mean
-        y = y.detach().numpy()
-        return y
+        predictions = self.model(test_x)
+        means = predictions.mean.detach()
+        std = predictions.variance.detach().sqrt()
+        means[means+2*std > 0.5] = 0.5001
+        return means.numpy()
+
+    def removeDuplicatesFromList(self, lst):
+        return [t for t in (set(tuple(i) for i in lst))]
+
+    def find_duplicate_indices(self, train_x):
+        length = train_x.shape[0]
+        duplicates = []
+        for i in range(length):
+            idx = np.where(((train_x[:, 0] == train_x[i][0]) & (train_x[:, 1] == train_x[i][1])))[0]
+            duplicates.append(idx)
+
+        unique_duplicates = set(map(tuple, duplicates))
+        return unique_duplicates
+
+    def pre_processing(self, train_x, train_y):
+        duplicates = self.find_duplicate_indices(train_x)
+        train_y_new = []
+        train_x_new = []
+
+        for tuple_ in duplicates:
+            mean = train_y[[tuple_]].mean()
+            train_y_new.append(mean)
+            train_x_new.append(train_x[tuple_[0]])
+
+        # np.delete(first_value, train_x[])
+        return (np.array(train_x_new), np.array(train_y_new))
 
     def fit_model(self, train_x, train_y):
         """
@@ -90,11 +119,17 @@ class Model():
         For this, we potentially employ some approximation, like the nystrom method.
         The inverse times the label data is stored in `self.alpha`.
         """
+        train_x, train_y = self.pre_processing(train_x, train_y)
         train_x = torch.from_numpy(train_x)
         train_y = torch.from_numpy(train_y)
 
         kernel = self.get_kernel(self.kernels, self.composition)
-        self.model = ExactGP(train_x, train_y, kernel)
+        kernel = gpt.kernels.ScaleKernel(RFFKernel(4000))
+        likelihood = gpt.likelihoods.GaussianLikelihood()
+
+        # self.model = RandomFeatureGP(train_x, train_y, kernel, likelihood)
+        self.model = ExactGP(train_x, train_y, kernel, likelihood)
+
         self.model.train()
         # self.model = RandomFeatureGP(train_x,
         #                              train_y,
@@ -104,13 +139,22 @@ class Model():
         # ===================================================
         #        Setting the hyperparameters
         # ===================================================
-        self.model.length_scale = self.lengthscale
-        self.model.output_scale = self.outputscale
+        self.model.lengthscale = self.lengthscale
+        self.model.outputscale = self.outputscale
         self.model.likelihood.noise = self.noise
+        # 'covar_module.base_kernel.kernels.0': torch.tensor(0.5),  #
+        hypers = {
+            'likelihood.noise_covar.noise': torch.tensor(0.044),
+            'mean_module.constant': torch.tensor(0.35),
+            'covar_module.base_kernel.lengthscale': torch.tensor(0.22),
+            'covar_module.outputscale': torch.tensor(0.033),
+        }
+        self.model.initialize(**hypers)
         # ===================================================
         #  Fitting the Hyperparameters Calcualting the model
         # ===================================================
         self.model_selection(train_x, train_y)
+        self.model.eval()
 
         self.already_fitted = True
         if False:
@@ -139,7 +183,7 @@ class Model():
             output = self.model(train_x)
             # Calc loss and backprop gradients
             loss = -mll(output, train_y)
-            loss.backward()
+            loss.backward(retain_graph=True)
 
             losses.append(loss.item())
             print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f  mean: %.3f' % (
@@ -148,14 +192,14 @@ class Model():
                 self.model.likelihood.noise.item(),
                 self.model.mean_module.constant.item()
             ))
-            lengthscales.append(self.model.length_scale.item())
-            outputscales.append(self.model.output_scale.item())
+            lengthscales.append(self.model.lengthscale.item())
+            outputscales.append(self.model.outputscale.item())
             noises.append(self.model.likelihood.noise.item())
             optimizer.step()
 
         print("Finished Training")
 
-    def get_kernel(self, kernel, composition="addition"):
+    def get_kernel(self, kernel, composition="addition", **kwargs):
         base_kernel = []
         if "RBF" in kernel:
             base_kernel.append(gpt.kernels.RBFKernel())
@@ -171,11 +215,15 @@ class Model():
             base_kernel.append(gpt.kernels.MaternKernel(nu=5/2))
         if "Cosine" in kernel:
             base_kernel.append(gpt.kernels.CosineKernel())
+        if "RFF":
+            base_kernel.append(gpt.kernels.ScaleKernel(RFFKernel(num_samples=kwargs.get("num_samples", 8000))))
 
-        if composition in {"addition", None}:
+        if composition == "addition":
             base_kernel = gpt.kernels.AdditiveKernel(*base_kernel)
         elif composition == "product":
             base_kernel = gpt.kernels.ProductKernel(*base_kernel)
+        elif composition is None:
+            base_kernel = base_kernel[0]
         else:
             raise NotImplementedError
         kernel = gpt.kernels.ScaleKernel(base_kernel)
@@ -214,18 +262,19 @@ def main():
     train_x_name = "train_x.csv"
     train_y_name = "train_y.csv"
 
-    # train_x = np.loadtxt(train_x_name, delimiter=',')
-    # train_y = np.loadtxt(train_y_name, delimiter=',')
+    if not RUN_DOCKER:
+        train_x = np.loadtxt(train_x_name, delimiter=',')
+        train_y = np.loadtxt(train_y_name, delimiter=',')
 
-    # # load the test dateset
-    # test_x_name = "test_x.csv"
-    # test_x = np.loadtxt(test_x_name, delimiter=',')
+        # # load the test dateset
+        test_x_name = "test_x.csv"
+        test_x = np.loadtxt(test_x_name, delimiter=',')
+    else:
+        train_x = torch.tensor(np.loadtxt(train_x_name, delimiter=','))
+        train_y = torch.tensor(np.loadtxt(train_y_name, delimiter=','))
 
-    train_x = torch.tensor(np.loadtxt(train_x_name, delimiter=','))
-    train_y = torch.tensor(np.loadtxt(train_y_name, delimiter=','))
-
-    test_x_name = "test_x.csv"
-    test_x = torch.tensor(np.loadtxt(test_x_name, delimiter=','))
+        test_x_name = "test_x.csv"
+        test_x = torch.tensor(np.loadtxt(test_x_name, delimiter=','))
 
     M = Model()
     M.fit_model(train_x, train_y)

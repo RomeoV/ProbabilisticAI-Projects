@@ -1,4 +1,4 @@
-import gpytorch
+import gpytorch as gpt
 from gpytorch.lazy import MatmulLazyTensor, lazify
 from gpytorch.models.exact_prediction_strategies import (
     DefaultPredictionStrategy,
@@ -9,44 +9,50 @@ import numpy as np
 torch.set_default_tensor_type(torch.DoubleTensor)
 
 
-class ExactGP(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, kernel, likelihood=gpytorch.likelihoods.GaussianLikelihood()):
+class ExactGP(gpt.models.ExactGP):
+    def __init__(self, train_x, train_y,
+                 kernel,
+                 likelihood
+                 ):
         super().__init__(train_x, train_y, likelihood=likelihood)
-        self.mean_module = gpytorch.means.ConstantMean(0.5)
+
+        self.mean_module = gpt.means.ConstantMean()
         self.covar_module = kernel
 
     def forward(self, x):
         """Forward computation of GP."""
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+        return gpt.distributions.MultivariateNormal(mean_x, covar_x)
 
     @property
-    def output_scale(self):
+    def outputscale(self):
         """Get output scale."""
         return self.covar_module.outputscale
 
-    @output_scale.setter
-    def output_scale(self, value):
+    @outputscale.setter
+    def outputscale(self, value):
         """Set output scale."""
         if not isinstance(value, torch.Tensor):
             value = torch.tensor([value])
         self.covar_module.outputscale = value
 
     @property
-    def length_scale(self):
+    def lengthscale(self):
         """Get length scale."""
-        ls = self.covar_module.base_kernel.kernels[0].lengthscale
+        if hasattr(self.covar_module.base_kernel, 'kernels'):
+            ls = self.covar_module.base_kernel.kernels[0].lengthscale
+        else:
+            ls = self.covar_module.base_kernel.lengthscale
         if ls is None:
             ls = torch.tensor(0.0)
         return ls
 
-    @length_scale.setter
-    def length_scale(self, value):
+    @lengthscale.setter
+    def lengthscale(self, value):
         """Set length scale."""
         if not isinstance(value, torch.Tensor):
             value = torch.tensor([value])
-
         try:
             self.covar_module.lengthscale = value
         except RuntimeError:
@@ -58,8 +64,9 @@ class ExactGP(gpytorch.models.ExactGP):
             pass
 
         try:
-            for kernel in self.covar_module.base_kernel.kernels:
-                kernel.lengthscale = value
+            if hasattr(self.covar_module.base_kernel, 'kernels'):
+                for kernel in self.covar_module.base_kernel.kernels:
+                    kernel.lengthscale = value
         except RuntimeError:
             pass
 
@@ -75,10 +82,11 @@ class RandomFeatureGP(ExactGP):
         train_x,
         train_y,
         kernel,
-        num_samples,
+        likelihood,
+        num_samples=4000,
         approximation="RFF",
     ):
-        super().__init__(train_x, train_y, kernel)
+        super().__init__(train_x, train_y, kernel, likelihood)
         self.num_samples = num_samples
         self.approximation = approximation
 
@@ -89,7 +97,7 @@ class RandomFeatureGP(ExactGP):
     @property
     def scale(self):
         """Return feature scale."""
-        return torch.sqrt(self._feature_scale * self.output_scale)
+        return torch.sqrt(self._feature_scale * self.outputscale)
 
     def sample_features(self):
         """Sample a new set of features."""
@@ -99,7 +107,7 @@ class RandomFeatureGP(ExactGP):
         """Sample a new set of random features."""
         # Only squared-exponential kernels are implemented.
         if self.approximation == "RFF":
-            w = torch.randn(self.num_samples, self.dim) / torch.sqrt(self.length_scale)
+            w = torch.randn(self.num_samples, self.dim) / torch.sqrt(self.lengthscale)
             scale = torch.tensor(1.0 / self.num_samples)
 
         elif self.approximation == "OFF":
@@ -110,7 +118,7 @@ class RandomFeatureGP(ExactGP):
                     dtype=torch.get_default_dtype(),
                 )
             )
-            w = (diag @ q) / torch.sqrt(self.length_scale)
+            w = (diag @ q) / torch.sqrt(self.lengthscale)
             scale = torch.tensor(1.0 / self.num_samples)
 
         elif self.approximation == "QFF":
@@ -121,7 +129,7 @@ class RandomFeatureGP(ExactGP):
             weights = torch.tensor(
                 weights[:q], dtype=torch.get_default_dtype())
 
-            omegas = torch.sqrt(1.0 / self.length_scale) * omegas
+            omegas = torch.sqrt(1.0 / self.lengthscale) * omegas
             w = torch.cartesian_prod(*[omegas.squeeze()
                                        for _ in range(self.dim)])
             if self.dim == 1:
@@ -156,7 +164,7 @@ class RandomFeatureGP(ExactGP):
             y = self.train_targets - self.mean_module(x)
             labels = zt @ y
 
-            prior_dist = gpytorch.distributions.MultivariateNormal(mean, cov)
+            prior_dist = gpt.distributions.MultivariateNormal(mean, cov)
             self.prediction_strategy = DefaultPredictionStrategy(
                 train_inputs=train_inputs,
                 train_prior_dist=prior_dist,
@@ -184,7 +192,7 @@ class RandomFeatureGP(ExactGP):
             dim = pred_mean.shape[-1]
             pred_cov = 1e-6 * torch.eye(dim)
 
-        return gpytorch.distributions.MultivariateNormal(pred_mean, pred_cov)
+        return gpt.distributions.MultivariateNormal(pred_mean, pred_cov)
 
     def forward(self, x):
         """Compute features at location x."""
