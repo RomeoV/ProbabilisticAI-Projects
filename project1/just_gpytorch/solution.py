@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import gpytorch as gpt
 import matplotlib.pyplot as plt
+from gpytorch.kernels.rff_kernel import RFFKernel
+from sklearn.model_selection import KFold, train_test_split
 
 torch.set_default_tensor_type(torch.DoubleTensor)
 
@@ -62,36 +64,47 @@ class Model:
         self.BHM: BlazingHotModel
 
     def fit_model(self, train_x, train_y):
-        self.BHM = BlazingHotModel(torch.tensor(train_x), torch.tensor(train_y))
+        N = train_x.shape[0]
+        rand_ind = torch.randperm(N)
+        train_ind = rand_ind[:N*8//10]
+        val_ind = rand_ind[N*8//10:]
+        self.BHM = BlazingHotModel(torch.tensor(train_x), torch.tensor(train_y), train_ind, val_ind)
 
     def predict(self, test_x):
-        predictions = self.BHM(torch.tensor(test_x)).mean.detach()
-        return predictions.numpy()
+        predictions = self.BHM(torch.tensor(test_x))
+        means = predictions.mean.detach()
+        std = predictions.variance.detach().sqrt()
+        means[means+2*std > 0.5] = 0.5001
+        return means.numpy()
 
 
 class BlazingHotModel(gpt.models.ExactGP):
 
-    def __init__(self, train_x, train_y):
+    def __init__(self, train_x, train_y, train_ind, val_ind):
         """
             TODO: enter your code here
         """
         likelihood = gpt.likelihoods.GaussianLikelihood()
-        super(BlazingHotModel, self).__init__(train_x, train_y, likelihood)
+        super(BlazingHotModel, self).__init__(train_x[train_ind], train_y[train_ind], likelihood)
+
+        self.train_ind = train_ind
+        self.val_ind = val_ind
 
         self.likelihood = likelihood
         self.mean_module = gpt.means.ConstantMean()
-        self.covar_module = gpt.kernels.ScaleKernel(gpt.kernels.RBFKernel())
+        #self.covar_module = gpt.kernels.ScaleKernel(gpt.kernels.RBFKernel())
+        self.covar_module = gpt.kernels.ScaleKernel(RFFKernel(num_samples=5000))
 
         hypers = {
-            'likelihood.noise_covar.noise': torch.tensor(1.),
-            'mean_module.constant': torch.tensor(0.8),
-            'covar_module.base_kernel.lengthscale': torch.tensor(0.5),
-            'covar_module.outputscale': torch.tensor(2.),
+            'likelihood.noise_covar.noise': torch.tensor(0.05),
+            'mean_module.constant': torch.tensor(0.6),
+            'covar_module.base_kernel.lengthscale': torch.tensor(0.4),
+            'covar_module.outputscale': torch.tensor(0.4),
         }
 
         self.initialize(**hypers)
 
-        self.fit_model(train_x, train_y, training_iter=20)
+        self.fit_model(train_x, train_y, training_iter=2)
         self.eval()
         self.likelihood.eval()
 
@@ -108,7 +121,10 @@ class BlazingHotModel(gpt.models.ExactGP):
         self.eval()
         self.likelihood.eval()
         predictions = self.forward(test_x)
-        return predictions.mean.detach()
+        means = predicions.mean.detach()
+        std = predictions.variance.detach().sqrt()
+        means[means+2*std > 0.5] = 0.5001
+        return means
 
     def fit_model(self, train_x, train_y, training_iter=20):
         """
@@ -118,20 +134,29 @@ class BlazingHotModel(gpt.models.ExactGP):
         self.likelihood.train()
 
         optimizer = torch.optim.Adam([
-            {'params': self.parameters()},
-        ], lr=0.1)
+            {'params': self.parameters()}
+        ], lr=0.01, weight_decay=1e-3)
 
         mll = gpt.mlls.ExactMarginalLogLikelihood(self.likelihood, self)
 
         for i in range(training_iter):
-            optimizer.zero_grad()
-            output = self.forward(train_x)
+            train_x_, val_x_ = train_x[self.train_ind], train_x[self.val_ind]
+            train_y_, val_y_ = train_y[self.train_ind], train_y[self.val_ind]
 
-            loss = -mll(output, train_y)
+            optimizer.zero_grad()
+            output = self.forward(train_x_)
+
+            loss = -mll(output, train_y_)
             loss.backward()
-            print(('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f   mean: %.3f' % (
-                i + 1, training_iter, loss.item(),
+
+            val_output = self.forward(val_x_)
+            val_loss = -mll(val_output, val_y_)
+            print(('Iter %d/%d - Loss: %.3f   Val Loss: %.3f   lengthscale: %.3f   outputscale: %.3f   noise: %.3f   mean: %.3f' % (
+                i + 1, training_iter,
+                loss.item(),
+                val_loss.item(),
                 self.covar_module.base_kernel.lengthscale.item(),
+                self.covar_module.outputscale.item(),
                 self.likelihood.noise.item(),
                 self.mean_module.constant.item(),
                 )
