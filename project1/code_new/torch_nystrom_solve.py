@@ -1,6 +1,7 @@
 import math
 import torch
 from itertools import product
+import gpytorch as gpt
 
 def nystrom_solve(X, t, m, sigma, k, compute_error=False):
     """ Solves (K + sigma I) a = t
@@ -16,13 +17,15 @@ def nystrom_solve(X, t, m, sigma, k, compute_error=False):
 
     # Randomly shuffle X
     n = X.shape[0]
-    perm = torch.randperm(n)
-    Xp = X[perm, :]
+    # perm = torch.randperm(n)
+    # Xp = X[perm, :]
+    Xp = X
 
     # Compute reduced kernel matrix
-    Knm = torch.zeros(n, m, dtype=dtype)
-    for (i, j) in product(torch.arange(n), torch.arange(m)):
-        Knm[i, j] = k(Xp[i, :], Xp[j, :])
+    # Knm = torch.zeros(n, m, dtype=dtype)
+    # for (i, j) in product(torch.arange(n), torch.arange(m)):
+    #     Knm[i, j] = k(Xp[i, :], Xp[j, :])
+    Knm = k(Xp[:n], Xp[:m]).evaluate()
 
     # Compute eigen-decomposition (see eq. (7))
     Lambda_m, U_m = torch.symeig(Knm[:m, :], eigenvectors=True)
@@ -41,9 +44,10 @@ def nystrom_solve(X, t, m, sigma, k, compute_error=False):
 
     if compute_error:
         # Compute full kernel matrix
-        Knn = torch.zeros(n, n, dtype=dtype)
-        for (i, j) in product(torch.arange(n), torch.arange(n)):
-            Knn[i, j] = k(Xp[i, :], Xp[j, :])
+        # Knn = torch.zeros(n, n, dtype=dtype)
+        # for (i, j) in product(torch.arange(n), torch.arange(n)):
+        #     Knn[i, j] = k(Xp[i, :], Xp[j, :])
+        Knn = k(Xp, Xp).evaluate()
         alpha_true, _ = torch.solve(t, Knn + sigma * torch.eye(n))
         print(torch.norm(alpha - alpha_true).item())
 
@@ -57,4 +61,5 @@ if __name__ == '__main__':
     m = 100
     sigma = 1e-1
     k = lambda x, y : torch.exp(-torch.norm(x - y)**2).item()
+    k = gpt.kernels.RBFKernel()
     alpha = nystrom_solve(X, t, m, sigma, k, compute_error=True)

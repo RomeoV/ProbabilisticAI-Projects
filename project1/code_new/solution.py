@@ -69,11 +69,13 @@ class Model():
         """
 
         self.PRIOR_CONST: float  # is computed in fit later
-        self.SIGMA = 0.05  # hyperparam
-        #self.kernel = gpt.kernels.RBFKernel(lengthscale_prior=gpt.priors.NormalPrior(0.25, 0.1));  # later, put hyperparams here
-        self.kernel = gpt.kernels.MaternKernel(lengthscale_prior=gpt.priors.NormalPrior(0.25, 0.1));  # later, put hyperparams here
+        self.SIGMA = 0.014  # hyperparam
+        self.kernel = gpt.kernels.ScaleKernel(gpt.kernels.RBFKernel());  # later, put hyperparams here
+        self.kernel.base_kernel.lengthscale = 0.150
+        self.kernel.outputscale = 0.023
+        # self.kernel = gpt.kernels.MaternKernel(lengthscale_prior=gpt.priors.NormalPrior(0.25, 0.1));  # later, put hyperparams here
 
-        self.inversion_method = 'sparse'  # 'full' or 'nystrom' or 'sparse'
+        self.inversion_method = 'nystrom'  # 'full' or 'nystrom' or 'sparse'
 
         self.already_fitted = False
 
@@ -90,7 +92,6 @@ class Model():
 
         assert self.already_fitted, "Model has to be fitted first!"
         k_xA = self.kernel(test_x, self.train_x).evaluate()
-        # import IPython; IPython.embed(); exit()
         mu = self.prior_func(test_x) + (k_xA @ self.alpha)
         return mu.detach().numpy()
 
@@ -117,9 +118,9 @@ class Model():
         print(f"Prior is {self.PRIOR_CONST}")
 
 
-        # import IPython; IPython.embed(); IPython.exit()
         if self.inversion_method is 'nystrom':
-            self.alpha = nystrom_solve(train_x, (train_y - mu_A), 2000, self.SIGMA, self.kernel, compute_error=False)
+            self.alpha = nystrom_solve(train_x, (train_y - mu_A).unsqueeze(dim=1), 5000, self.SIGMA, self.kernel, compute_error=False)
+            self.alpha = self.alpha.squeeze()
         elif self.inversion_method is 'full':
             K_plus_sigma = self.kernel(train_x, train_x).evaluate() + self.SIGMA**2 * torch.eye(N)
             self.alpha, _ = torch.solve((train_y - mu_A).unsqueeze(1), K_plus_sigma)  # replace with e.g. nystrom
@@ -127,7 +128,6 @@ class Model():
         elif self.inversion_method is 'sparse':
             K_plus_sigma = self.kernel(train_x, train_x).evaluate() + self.SIGMA**2 * torch.eye(N)
             K_plus_sigma = K_plus_sigma.detach().numpy()
-            #import pdb; pdb.set_trace();
             K_plus_sigma[K_plus_sigma < 0.1] = 0
             K_sparse = sparse.csr_matrix(K_plus_sigma)
             rhs = (train_y - mu_A).numpy()
