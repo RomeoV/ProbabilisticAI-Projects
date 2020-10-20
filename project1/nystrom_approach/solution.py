@@ -94,11 +94,12 @@ class Model():
             return mean
 
         test_x = torch.tensor(test_x)
+        test_x.requires_grad_(False)
 
         assert self.already_fitted, "Model has to be fitted first!"
         k_xA = self.kernel(test_x, self.train_x).evaluate()
         mu = self.prior_func(test_x) + (k_xA @ self.alpha)
-        beta = nystrom_solve(self.train_x, k_xA.t(), 1000, self.SIGMA, self.kernel, compute_error=False)
+        beta = nystrom_solve(self.train_x, k_xA.t(), 5000, self.SIGMA, self.kernel, compute_error=False)
         cov = self.kernel(test_x).evaluate().diag()  - (k_xA @ beta).diag()
 
         prediction = post_process(mu.detach(), cov.detach())
@@ -119,6 +120,12 @@ class Model():
         """
         train_x = torch.tensor(train_x)
         train_y = torch.tensor(train_y)
+        train_x.requires_grad_(False)
+        train_y.requires_grad_(False)
+
+        perm = torch.randperm(train_x.shape[0])
+        train_x = train_x[perm]
+        train_y = train_y[perm]
 
         N = train_x.shape[0]
         self.train_x = train_x
@@ -127,14 +134,14 @@ class Model():
         print(f"Prior is {self.PRIOR_CONST}")
 
 
-        if self.inversion_method is 'nystrom':
-            self.alpha = nystrom_solve(train_x, (train_y - mu_A).unsqueeze(dim=1), 1000, self.SIGMA, self.kernel, compute_error=False)
+        if self.inversion_method == 'nystrom':
+            self.alpha = nystrom_solve(train_x, (train_y - mu_A).unsqueeze(dim=1), 5000, self.SIGMA, self.kernel, compute_error=False)
             self.alpha = self.alpha.squeeze()
-        elif self.inversion_method is 'full':
+        elif self.inversion_method == 'full':
             K_plus_sigma = self.kernel(train_x, train_x).evaluate() + self.SIGMA**2 * torch.eye(N)
             self.alpha, _ = torch.solve((train_y - mu_A).unsqueeze(1), K_plus_sigma)  # replace with e.g. nystrom
             self.alpha = self.alpha.squeeze(1)
-        elif self.inversion_method is 'sparse':
+        elif self.inversion_method == 'sparse':
             K_plus_sigma = self.kernel(train_x, train_x).evaluate() + self.SIGMA**2 * torch.eye(N)
             K_plus_sigma = K_plus_sigma.detach().numpy()
             K_plus_sigma[K_plus_sigma < 0.1] = 0
