@@ -73,6 +73,7 @@ class Model():
         self.kernel = gpt.kernels.ScaleKernel(gpt.kernels.RBFKernel());  # later, put hyperparams here
         self.kernel.base_kernel.lengthscale = 0.150
         self.kernel.outputscale = 0.023
+        self.train_x : torch.tensor
         # self.kernel = gpt.kernels.MaternKernel(lengthscale_prior=gpt.priors.NormalPrior(0.25, 0.1));  # later, put hyperparams here
 
         self.inversion_method = 'nystrom'  # 'full' or 'nystrom' or 'sparse'
@@ -88,12 +89,20 @@ class Model():
         See equations from :func:`Model.fit_model`
         We compute the kernel combinations from our test_x with our train_x and add our prior.
         """
+        def post_process(mean, cov):
+            mean[(mean < 0.5).logical_and(mean + 2*cov > 0.5)] = 0.50001
+            return mean
+
         test_x = torch.tensor(test_x)
 
         assert self.already_fitted, "Model has to be fitted first!"
         k_xA = self.kernel(test_x, self.train_x).evaluate()
         mu = self.prior_func(test_x) + (k_xA @ self.alpha)
-        return mu.detach().numpy()
+        beta = nystrom_solve(self.train_x, k_xA.t(), 1000, self.SIGMA, self.kernel, compute_error=False)
+        cov = self.kernel(test_x).evaluate().diag()  - (k_xA @ beta).diag()
+
+        prediction = post_process(mu.detach(), cov.detach())
+        return prediction.numpy()
 
     def fit_model(self, train_x, train_y):
         """ Computes Kernel inverse for training data
@@ -119,7 +128,7 @@ class Model():
 
 
         if self.inversion_method is 'nystrom':
-            self.alpha = nystrom_solve(train_x, (train_y - mu_A).unsqueeze(dim=1), 5000, self.SIGMA, self.kernel, compute_error=False)
+            self.alpha = nystrom_solve(train_x, (train_y - mu_A).unsqueeze(dim=1), 1000, self.SIGMA, self.kernel, compute_error=False)
             self.alpha = self.alpha.squeeze()
         elif self.inversion_method is 'full':
             K_plus_sigma = self.kernel(train_x, train_x).evaluate() + self.SIGMA**2 * torch.eye(N)
@@ -155,8 +164,8 @@ def main():
     ind = np.random.permutation(train_x.shape[0])
     train_x = train_x[ind]
     train_y = train_y[ind]
-    train_x = train_x[:10000]
-    train_y = train_y[:10000]
+    train_x = train_x
+    train_y = train_y
 
     # load the test dateset
     test_x_name = "test_x.csv"

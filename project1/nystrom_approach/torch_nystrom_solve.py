@@ -20,15 +20,22 @@ def nystrom_solve(X, t, m, sigma, k, compute_error=False):
     # perm = torch.randperm(n)
     # Xp = X[perm, :]
     Xp = X
+    m_rhs = X[:,0] > -0.5
+
+    ind_where_lhs = torch.arange(n)[m_rhs.logical_not()]
+    m_lhs = torch.zeros(n, dtype=torch.bool)
+    m_lhs[ind_where_lhs[:(m - m_rhs.sum())]] = True
+
+    m_ind = m_rhs.logical_or(m_lhs)
 
     # Compute reduced kernel matrix
     # Knm = torch.zeros(n, m, dtype=dtype)
     # for (i, j) in product(torch.arange(n), torch.arange(m)):
     #     Knm[i, j] = k(Xp[i, :], Xp[j, :])
-    Knm = k(Xp[:n], Xp[:m]).evaluate()
+    Knm = k(Xp[:n], Xp[m_ind]).evaluate()
 
     # Compute eigen-decomposition (see eq. (7))
-    Lambda_m, U_m = torch.symeig(Knm[:m, :], eigenvectors=True)
+    Lambda_m, U_m = torch.symeig(Knm[m_ind], eigenvectors=True)
 
     # Compute approximate eigenvalues (see eq. (8))
     Lambda = (n / m) * Lambda_m
@@ -43,6 +50,7 @@ def nystrom_solve(X, t, m, sigma, k, compute_error=False):
     alpha = 1.0 / sigma * (t - U @ z)
 
     if compute_error:
+        print("Computing error")
         # Compute full kernel matrix
         # Knn = torch.zeros(n, n, dtype=dtype)
         # for (i, j) in product(torch.arange(n), torch.arange(n)):
