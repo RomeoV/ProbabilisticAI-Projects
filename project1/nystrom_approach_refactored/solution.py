@@ -65,12 +65,7 @@ class Model():
         """
         # Setup approximation parameters
         self.kernel = gpytorch.kernels.RBFKernel()
-        self.sigma = 1e-1
-        self.m = 2000
-
-        self.kernel = gpytorch.kernels.ScaleKernel(self.kernel)
-        self.kernel.base_kernel.lengthscale = 0.150
-        self.kernel.outputscale = 0.023
+        self.m = 300
 
     def predict(self, test_x):
         """
@@ -84,7 +79,7 @@ class Model():
 
         # Compute mean
         # both train_x and alpha are permuted so multiplication should be fine
-        mu = self.prior + k_xA @ self.alpha
+        mu = self.mu_prior + k_xA @ self.alpha
 
         # Compute covariance (solve with multiple right-hand-sides)
         beta = self.solver.solve(k_xA.t()) # rhs already permuted
@@ -92,7 +87,7 @@ class Model():
         cov = self.kernel(test_x).evaluate().diag() - (k_xA @ beta).diag()
 
         # Postprocess prediction
-        mu[(mu < 0.5).logical_and(mu + 2*cov > 0.5)] = 0.50001
+        mu[(mu < 0.5).logical_and(mu + 2.5 * torch.sqrt(cov) > 0.5)] = 0.50001
 
         return mu.detach().numpy()
 
@@ -105,8 +100,9 @@ class Model():
         train_y = torch.from_numpy(train_y).unsqueeze(1)
         n = train_x.shape[0]
 
-        # Compute constant prior based on train_y
-        self.prior = train_y.median()
+        # Compute mu and sigma priors based on train_y
+        self.mu_prior = train_y.mean()
+        self.sigma_prior = train_y.std()
 
         # Setup permutation vector
         # perm = torch.randperm(n)
@@ -129,11 +125,11 @@ class Model():
         train_y_perm = train_y[perm, :]
 
         # Setup NystromSolver
-        solver = NystromSolver(train_x_perm, self.kernel, self.m, self.sigma)
+        solver = NystromSolver(train_x_perm, self.kernel, self.m, self.sigma_prior**2)
         solver.preprocess()
 
         # Fit model using Nystrom
-        alpha = solver.solve(train_y_perm - self.prior)
+        alpha = solver.solve(train_y_perm - self.mu_prior)
         # alpha = alpha[iperm, :].squeeze()
         alpha = alpha.squeeze() # Keep permuted
 
