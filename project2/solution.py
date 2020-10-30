@@ -4,6 +4,7 @@ import os
 from matplotlib import pyplot as plt
 from sklearn.metrics import average_precision_score, roc_auc_score
 from torch import nn
+import torch
 from torch.nn import functional as F
 from tqdm import trange, tqdm
 
@@ -106,6 +107,7 @@ class BayesianLayer(torch.nn.Module):
     variational inference. It keeps prior and posterior weights
     (and biases) and uses the reparameterization trick for sampling.
     '''
+
     def __init__(self, input_dim, output_dim, bias=True):
         super().__init__()
         self.input_dim = input_dim
@@ -113,30 +115,38 @@ class BayesianLayer(torch.nn.Module):
         self.use_bias = bias
 
         # TODO: enter your code here
-        #self.prior_mu = ?
-        #self.prior_sigma = ?
-        #self.weight_mu = nn.?
-        #self.weight_logsigma = ?
+        self.prior_mu = nn.Parameter(torch.tensor([0]))  # this we just guess
+        self.prior_sigma = nn.Parameter(torch.tensor([1]))
+        self.weight_mu = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
+        self.weight_logsigmasq = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
-            self.bias_logsigma = nn.Parameter(torch.zeros(output_dim))
+            self.bias_logsigmasq = nn.Parameter(torch.zeros(output_dim))
         else:
             self.register_parameter('bias_mu', None)
             self.register_parameter('bias_logsigma', None)
 
 
     def forward(self, inputs):
-        # TODO: enter your code here
+        # 1) Sample weights
+        # 2) Sample bias
+        # 3) Apply linear layer using these weights
+        weight_distribution = nn.Normal(
+                self.weight_mu.weight,
+                self.weight_logsigmasq.weight.exp(),
+        )
 
         if self.use_bias:
             # TODO: enter your code here
+            raise "Not implemented yet"
             pass
         else:
             bias = None
+            W = weight_distribution.rsample()
+            y = F.linear(W, inputs, bias)
 
-        # TODO: enter your code here
-        # return ?
+        return y
 
 
     def kl_divergence(self):
@@ -155,7 +165,13 @@ class BayesianLayer(torch.nn.Module):
         and the Gaussian prior.
         '''
 
+        d = mu.shape[0]
         # TODO: enter your code here
+        kl = 1/2 * ( 1/self.prior_sigma * self.weight_logsigmasq.exp().sum()
+                   + (self.prior_mean - self.weight_mean).pow(2).sum() / self.prior_sigma
+                   - d
+                   (self.prior_mean.pow(d) / self.weight_logsigmasq.exp().prod())
+                   )
 
         return kl
 
