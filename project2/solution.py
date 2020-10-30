@@ -108,7 +108,7 @@ class BayesianLayer(torch.nn.Module):
     (and biases) and uses the reparameterization trick for sampling.
     '''
 
-    def __init__(self, input_dim, output_dim, bias=False):  #TODO change bias back to true
+    def __init__(self, input_dim, output_dim, bias=True):  #TODO change bias back to true
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -119,6 +119,8 @@ class BayesianLayer(torch.nn.Module):
         self.prior_sigma = nn.Parameter(torch.tensor([1.]), requires_grad=False)
         self.weight_mu = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
         self.weight_logsigmasq = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
+        nn.init.normal_(self.weight_mu.weight, self.prior_mu.item(), self.prior_sigma.item())
+        nn.init.normal_(self.weight_logsigmasq.weight, self.prior_mu.item(), self.prior_sigma.item())
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
@@ -137,10 +139,16 @@ class BayesianLayer(torch.nn.Module):
                 self.weight_mu.weight,
                 self.weight_logsigmasq.weight.exp(),
         )
+        bias_distribution = torch.distributions.Normal(
+                self.bias_mu,
+                self.bias_logsigmasq.exp(),
+        )
 
         if self.use_bias:
             # TODO: enter your code here
-            raise "Not implemented yet"
+            W = weight_distribution.rsample()
+            b = bias_distribution.rsample()
+            y = inputs @ W.t() + b
             pass
         else:
             bias = None
@@ -156,11 +164,11 @@ class BayesianLayer(torch.nn.Module):
         '''
         kl_loss = self._kl_divergence(self.weight_mu.weight, self.weight_logsigmasq.weight)
         if self.use_bias:
-            kl_loss += self._kl_divergence(self.bias_mu.weight, self.bias_logsigma.weight)
+            kl_loss += self._kl_divergence(self.bias_mu, self.bias_logsigmasq)
         return kl_loss
 
 
-    def _kl_divergence(self, mu, logsigma):
+    def _kl_divergence(self, mu, logsigmasq):
         '''
         Computes the KL divergence between one Gaussian posterior
         and the Gaussian prior.
@@ -168,11 +176,19 @@ class BayesianLayer(torch.nn.Module):
 
         d = mu.numel()
         # TODO: enter your code here
-        kl = 1/2 * (1/self.prior_sigma * self.weight_logsigmasq.weight.exp().sum()
-                    + (self.prior_mu - self.weight_mu.weight).pow(2).sum() / self.prior_sigma
-                    - d
-                    + (self.prior_mu.pow(d) / (self.weight_logsigmasq.weight.exp().prod() + 1e-6))
-                    )
+
+        """ Full gaussian kl-divergence """
+        # kl = 1/2 * (1/(self.prior_sigma**2) * logsigmasq.exp().sum()
+        #             + (self.prior_mu - mu).pow(2).sum() / (self.prior_sigma**2)
+        #             - d
+        #             + ((self.prior_sigma**2).pow(d) / (logsigmasq.exp().prod() + 1e-6))
+        #             )
+
+        """ Reduced gaussian kl-divergence """
+        kl = 1/2 * (logsigmasq.exp().sum() + mu.pow(2).sum() - d - logsigmasq.sum())
+
+        #breakpoint()
+        # print((logsigmasq.abs().min().item(), logsigmasq.abs().max().item()))
 
         return kl
 
@@ -213,6 +229,7 @@ class BayesNet(torch.nn.Module):
         probs = results.mean(0).softmax(-1)
 
         assert probs.shape == (batch_size, 10)
+        assert (probs[0,:].sum() - 1) < 1e-5
         return probs
 
 
@@ -243,17 +260,21 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
         for k, (batch_x, batch_y) in enumerate(train_loader):
             model.zero_grad()
             y_pred = model(batch_x)
+            if i%10 == 0 and k == 0:
+                print(f"Loss: {criterion(y_pred, batch_y):.3f}, {model.kl_loss().squeeze():.3f}")
             loss = criterion(y_pred, batch_y)
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
-                loss -= model.kl_loss().squeeze()
+                loss += model.kl_loss().squeeze()
             loss.backward()
             optimizer.step()
 
             if k % pbar_update_interval == 0:
                 acc = (model(batch_x).argmax(axis=1) == batch_y).sum().float()/(len(batch_y))
                 pbar.set_postfix(loss=loss.item(), acc=acc.item())
+            if i == 50:
+                breakpoint()
 
 
 def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, private_test):
@@ -351,7 +372,7 @@ def main(test_loader=None, private_test=False):
     num_epochs = 100 # You might want to adjust this
     batch_size = 128  # Try playing around with this
     print_interval = 100
-    learning_rate = 5e-4  # Try playing around with this
+    learning_rate = 1e-3  # Try playing around with this
     model_type = "bayesnet"  # Try changing this to "densenet" as a comparison
     extended_evaluation = False  # Set this to True for additional model evaluation
 
