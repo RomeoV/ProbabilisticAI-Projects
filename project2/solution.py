@@ -64,7 +64,7 @@ def load_rotated_mnist():
     if not os.path.isfile(mnist_path):
         mnist_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/rotated_mnist.npz")
 
-    data = np.load(mnist_path)
+    data = np.load(mnist_path, allow_pickle=True)
 
     x_train = torch.from_numpy(data["x_train"]).reshape([-1, 784])
     y_train = torch.from_numpy(data["y_train"])
@@ -108,15 +108,15 @@ class BayesianLayer(torch.nn.Module):
     (and biases) and uses the reparameterization trick for sampling.
     '''
 
-    def __init__(self, input_dim, output_dim, bias=True):
+    def __init__(self, input_dim, output_dim, bias=False):  #TODO change bias back to true
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.use_bias = bias
 
         # TODO: enter your code here
-        self.prior_mu = nn.Parameter(torch.tensor([0]))  # this we just guess
-        self.prior_sigma = nn.Parameter(torch.tensor([1]))
+        self.prior_mu = nn.Parameter(torch.tensor([0.]))  # this we just guess
+        self.prior_sigma = nn.Parameter(torch.tensor([1.]))
         self.weight_mu = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
         self.weight_logsigmasq = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
 
@@ -129,10 +129,11 @@ class BayesianLayer(torch.nn.Module):
 
 
     def forward(self, inputs):
+        # inputs will be (n_batch x n_features)
         # 1) Sample weights
         # 2) Sample bias
         # 3) Apply linear layer using these weights
-        weight_distribution = nn.Normal(
+        weight_distribution = torch.distributions.Normal(
                 self.weight_mu.weight,
                 self.weight_logsigmasq.weight.exp(),
         )
@@ -144,7 +145,7 @@ class BayesianLayer(torch.nn.Module):
         else:
             bias = None
             W = weight_distribution.rsample()
-            y = F.linear(W, inputs, bias)
+            y = inputs @ W.t()
 
         return y
 
@@ -153,9 +154,9 @@ class BayesianLayer(torch.nn.Module):
         '''
         Computes the KL divergence between the priors and posteriors for this layer.
         '''
-        kl_loss = self._kl_divergence(self.weight_mu, self.weight_logsigma)
+        kl_loss = self._kl_divergence(self.weight_mu.weight, self.weight_logsigmasq.weight)
         if self.use_bias:
-            kl_loss += self._kl_divergence(self.bias_mu, self.bias_logsigma)
+            kl_loss += self._kl_divergence(self.bias_mu.weight, self.bias_logsigma.weight)
         return kl_loss
 
 
@@ -165,13 +166,13 @@ class BayesianLayer(torch.nn.Module):
         and the Gaussian prior.
         '''
 
-        d = mu.shape[0]
+        d = mu.numel()
         # TODO: enter your code here
-        kl = 1/2 * ( 1/self.prior_sigma * self.weight_logsigmasq.exp().sum()
-                   + (self.prior_mean - self.weight_mean).pow(2).sum() / self.prior_sigma
-                   - d
-                   (self.prior_mean.pow(d) / self.weight_logsigmasq.exp().prod())
-                   )
+        kl = 1/2 * (1/self.prior_sigma * self.weight_logsigmasq.weight.exp().sum()
+                    + (self.prior_mu - self.weight_mu.weight).pow(2).sum() / self.prior_sigma
+                    - d
+                    + (self.prior_mu.pow(d) / self.weight_logsigmasq.weight.exp().prod())
+                    )
 
         return kl
 
@@ -191,6 +192,7 @@ class BayesNet(torch.nn.Module):
         output_layer = BayesianLayer(width, 10)
         layers = [input_layer, *hidden_layers, output_layer]
         self.net = torch.nn.Sequential(*layers)
+        print(self.net)
 
 
     def forward(self, x):
@@ -205,6 +207,11 @@ class BayesNet(torch.nn.Module):
         # compute the categorical softmax probabilities
         # marginalize the probabilities over the n forward passes
 
+        results = torch.zeros(num_forward_passes, batch_size, 10)
+        for i in range(num_forward_passes):
+            results[i] = self.forward(x)
+        probs = results.mean(0)
+
         assert probs.shape == (batch_size, 10)
         return probs
 
@@ -214,7 +221,11 @@ class BayesNet(torch.nn.Module):
         Computes the KL divergence loss for all layers.
         '''
         # TODO: enter your code here
+        kl_divergences_prior = (sum(
+            l[0].kl_divergence() for l in self.net[:-1])
+            + self.net[-1].kl_divergence())
 
+        return kl_divergences_prior
 
 def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_interval=100):
     '''
@@ -236,7 +247,7 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
-                pass
+                loss -= model.kl_loss().squeeze()
             loss.backward()
             optimizer.step()
 
@@ -349,7 +360,7 @@ def main(test_loader=None, private_test=False):
                                                shuffle=True, drop_last=True)
 
     if model_type == "bayesnet":
-        model = BayesNet(input_size=784, num_layers=2, width=100)
+        model = BayesNet(input_size=784, num_layers=2, width=100, )
     elif model_type == "densenet":
         model = Densenet(input_size=784, num_layers=2, width=100)
 
