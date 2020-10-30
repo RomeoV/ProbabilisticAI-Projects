@@ -115,8 +115,8 @@ class BayesianLayer(torch.nn.Module):
         self.use_bias = bias
 
         # TODO: enter your code here
-        self.prior_mu = nn.Parameter(torch.tensor([0.]))  # this we just guess
-        self.prior_sigma = nn.Parameter(torch.tensor([1.]))
+        self.prior_mu = nn.Parameter(torch.tensor([0.]), requires_grad=False)  # this we just guess
+        self.prior_sigma = nn.Parameter(torch.tensor([1.]), requires_grad=False)
         self.weight_mu = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
         self.weight_logsigmasq = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
 
@@ -171,7 +171,7 @@ class BayesianLayer(torch.nn.Module):
         kl = 1/2 * (1/self.prior_sigma * self.weight_logsigmasq.weight.exp().sum()
                     + (self.prior_mu - self.weight_mu.weight).pow(2).sum() / self.prior_sigma
                     - d
-                    + (self.prior_mu.pow(d) / self.weight_logsigmasq.weight.exp().prod())
+                    + (self.prior_mu.pow(d) / (self.weight_logsigmasq.weight.exp().prod() + 1e-6))
                     )
 
         return kl
@@ -210,7 +210,7 @@ class BayesNet(torch.nn.Module):
         results = torch.zeros(num_forward_passes, batch_size, 10)
         for i in range(num_forward_passes):
             results[i] = self.forward(x)
-        probs = results.mean(0)
+        probs = results.mean(0).softmax(-1)
 
         assert probs.shape == (batch_size, 10)
         return probs
