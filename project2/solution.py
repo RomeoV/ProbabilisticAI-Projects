@@ -131,6 +131,7 @@ class BayesianLayer(torch.nn.Module):
 
         if self.use_bias:
             # TODO: enter your code here
+            pass
         else:
             bias = None
 
@@ -164,6 +165,7 @@ class BayesNet(torch.nn.Module):
     Module implementing a Bayesian feedforward neural network using
     BayesianLayer objects.
     '''
+
     def __init__(self, input_size, num_layers, width):
         super().__init__()
         input_layer = torch.nn.Sequential(BayesianLayer(input_size, width),
@@ -206,7 +208,8 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
     The progress bar computes the accuracy every `pbar_update_interval`
     iterations.
     '''
-    criterion = torch.nn.CrossEntropyLoss() # always used in this assignment
+
+    criterion = torch.nn.CrossEntropyLoss()  # always used in this assignment
 
     pbar = trange(num_epochs)
     for i in pbar:
@@ -217,6 +220,7 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
+                pass
             loss.backward()
             optimizer.step()
 
