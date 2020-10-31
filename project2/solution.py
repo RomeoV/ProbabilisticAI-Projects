@@ -64,7 +64,7 @@ def load_rotated_mnist():
     if not os.path.isfile(mnist_path):
         mnist_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/rotated_mnist.npz")
 
-    data = np.load(mnist_path, allow_pickle=True)
+    data = np.load(mnist_path)
 
     x_train = torch.from_numpy(data["x_train"]).reshape([-1, 784])
     y_train = torch.from_numpy(data["y_train"])
@@ -108,7 +108,7 @@ class BayesianLayer(torch.nn.Module):
     (and biases) and uses the reparameterization trick for sampling.
     '''
 
-    def __init__(self, input_dim, output_dim, bias=True):  #TODO change bias back to true
+    def __init__(self, input_dim, output_dim, bias=True):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -214,8 +214,13 @@ class BayesNet(torch.nn.Module):
         print(self.net)
 
 
-    def forward(self, x):
-        return self.net(x)
+    def forward(self, x, num_forward_passes=20):
+        batch_size = x.shape[0]
+        results = torch.zeros(num_forward_passes, batch_size, 10)
+        for i in range(num_forward_passes):
+            results[i] = self.net(x)
+        logits = results.mean(0)
+        return logits
 
 
     def predict_class_probs(self, x, num_forward_passes=10):
@@ -226,13 +231,10 @@ class BayesNet(torch.nn.Module):
         # compute the categorical softmax probabilities
         # marginalize the probabilities over the n forward passes
 
-        results = torch.zeros(num_forward_passes, batch_size, 10)
-        for i in range(num_forward_passes):
-            results[i] = self.forward(x)
-        probs = results.mean(0).softmax(-1)
+        probs = self.forward(x, num_forward_passes).softmax(-1)
 
         assert probs.shape == (batch_size, 10)
-        assert (probs[0,:].sum() - 1) < 1e-5
+        assert (probs[0,:].sum() - 1).abs() < 1e-5
         return probs
 
 
@@ -260,18 +262,16 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
 
     pbar = trange(num_epochs)
     for i in pbar:
-        num_batches = 60000//128
         for k, (batch_x, batch_y) in enumerate(train_loader):
             model.zero_grad()
             y_pred = model(batch_x)
-            if i%10 == 0 and k == 0:
-                print(f"Loss: {criterion(y_pred, batch_y):.3f}, {model.kl_loss().squeeze():.3f}")
             loss = criterion(y_pred, batch_y)
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
-                loss = loss * 128  # mul by batch size
-                loss += model.kl_loss().squeeze() / num_batches
+                loss += model.kl_loss().squeeze()
+                if i%10 == 0 and k == 0:
+                    print(f"Loss: {criterion(y_pred, batch_y):.3f}, {model.kl_loss().squeeze():.3f}")
             loss.backward()
             optimizer.step()
 
@@ -386,7 +386,7 @@ def main(test_loader=None, private_test=False):
                                                shuffle=True, drop_last=True)
 
     if model_type == "bayesnet":
-        model = BayesNet(input_size=784, num_layers=2, width=100, )
+        model = BayesNet(input_size=784, num_layers=2, width=100)
     elif model_type == "densenet":
         model = Densenet(input_size=784, num_layers=2, width=100)
 
