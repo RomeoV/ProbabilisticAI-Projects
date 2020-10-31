@@ -219,7 +219,7 @@ class BayesNet(torch.nn.Module):
         print(self.net)
 
 
-    def forward(self, x, num_forward_passes=20):
+    def forward(self, x, num_forward_passes=1):
         batch_size = x.shape[0]
         results = torch.zeros(num_forward_passes, batch_size, 10)
         for i in range(num_forward_passes):
