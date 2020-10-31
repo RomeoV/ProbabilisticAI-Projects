@@ -108,23 +108,23 @@ class BayesianLayer(torch.nn.Module):
     (and biases) and uses the reparameterization trick for sampling.
     '''
 
-    def __init__(self, input_dim, output_dim, bias=True):
+    def __init__(self, input_dim, output_dim, bias=False):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.use_bias = bias
 
         # TODO: enter your code here
-        self.prior_mu = nn.Parameter(torch.tensor([0.]), requires_grad=False)  # this we just guess
-        self.prior_sigma = nn.Parameter(torch.tensor([1.]), requires_grad=False)
-        self.weight_mu = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
-        self.weight_logsigmasq = nn.Linear(in_features=input_dim, out_features=output_dim, bias=False)
-        nn.init.normal_(self.weight_mu.weight, self.prior_mu.item(), self.prior_sigma.item())
-        nn.init.normal_(self.weight_logsigmasq.weight, self.prior_mu.item(), self.prior_sigma.item())
+        self.prior_mu = torch.tensor([0.], requires_grad=False)  # this we just guess
+        self.prior_sigma = torch.tensor([1.], requires_grad=False)
+        self.weight_mu = nn.Parameter(torch.zeros(output_dim, input_dim))
+        self.weight_logsigma = nn.Parameter(torch.zeros(output_dim, input_dim))
+        nn.init.normal_(self.weight_mu, self.prior_mu.item(), self.prior_sigma.item())
+        nn.init.normal_(self.weight_logsigma, self.prior_mu.item(), self.prior_sigma.item())
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
-            self.bias_logsigmasq = nn.Parameter(torch.ones(output_dim))
+            self.bias_logsigma = nn.Parameter(torch.ones(output_dim))
         else:
             self.register_parameter('bias_mu', None)
             self.register_parameter('bias_logsigma', None)
@@ -136,26 +136,32 @@ class BayesianLayer(torch.nn.Module):
         # 2) Sample bias
         # 3) Apply linear layer using these weights
         weight_distribution = torch.distributions.Normal(
-                self.weight_mu.weight,
-                self.weight_logsigmasq.weight.exp(),
+                self.weight_mu,
+                self.weight_logsigma.exp().pow(2),
         )
-        bias_distribution = torch.distributions.Normal(
-                self.bias_mu,
-                self.bias_logsigmasq.exp(),
-        )
+        if self.use_bias:
+            bias_distribution = torch.distributions.Normal(
+                    self.bias_mu,
+                    self.bias_logsigma.exp().pow(2),
+            )
 
         normal = torch.distributions.Normal(0, 1)
 
         if self.use_bias:
             # TODO: enter your code here
-            eps_W = normal.sample(sample_shape=self.weight_mu.weight.size())
-            eps_b = normal.sample(sample_shape=(self.weight_mu.weight.size()[0],))
-            W = self.weight_logsigmasq.weight.exp().sqrt() * eps_W + self.weight_mu.weight
-            b = self.bias_logsigmasq.exp().sqrt() * eps_b + self.bias_mu
+            eps_W = normal.sample(sample_shape=self.weight_mu.size()).requires_grad_(False)
+            eps_b = normal.sample(sample_shape=(self.weight_mu.size()[0],)).requires_grad_(False)
+            W = self.weight_logsigma.exp() * eps_W + self.weight_mu
+            b = self.bias_logsigma.exp() * eps_b + self.bias_mu
+            #W = weight_distribution.rsample()
+            #b = bias_distribution.rsample()
             y = inputs @ W.t() + b
         else:
             bias = None
-            W = weight_distribution.rsample()
+            eps_W = normal.sample(sample_shape=(128, self.weight_mu.size()[0], self.weight_mu.size()[1])).requires_grad_(False)
+            eps_W = eps_W.mean(0)
+            W = self.weight_logsigma.exp() * eps_W + self.weight_mu
+            #W = weight_distribution.rsample()
             y = inputs @ W.t()
 
         return y
@@ -165,13 +171,13 @@ class BayesianLayer(torch.nn.Module):
         '''
         Computes the KL divergence between the priors and posteriors for this layer.
         '''
-        kl_loss = self._kl_divergence(self.weight_mu.weight, self.weight_logsigmasq.weight)
+        kl_loss = self._kl_divergence(self.weight_mu, self.weight_logsigma)
         if self.use_bias:
-            kl_loss += self._kl_divergence(self.bias_mu, self.bias_logsigmasq)
+            kl_loss += self._kl_divergence(self.bias_mu, self.bias_logsigma)
         return kl_loss
 
 
-    def _kl_divergence(self, mu, logsigmasq):
+    def _kl_divergence(self, mu, logsigma):
         '''
         Computes the KL divergence between one Gaussian posterior
         and the Gaussian prior.
@@ -181,17 +187,16 @@ class BayesianLayer(torch.nn.Module):
         # TODO: enter your code here
 
         """ Full gaussian kl-divergence """
-        # kl = 1/2 * (1/(self.prior_sigma**2) * logsigmasq.exp().sum()
+        # kl = 1/2 * (1/(self.prior_sigma**2) * logsigma.exp().sum()
         #             + (self.prior_mu - mu).pow(2).sum() / (self.prior_sigma**2)
         #             - d
-        #             + ((self.prior_sigma**2).pow(d) / (logsigmasq.exp().prod() + 1e-6))
+        #             + ((self.prior_sigma**2).pow(d) / (logsigma.exp().prod() + 1e-6))
         #             )
 
         """ Reduced gaussian kl-divergence """
-        kl = 1/2 * (logsigmasq.exp().sum() + mu.pow(2).sum() - d - logsigmasq.sum())
+        kl = 1/2 * (logsigma.exp().pow(2).sum() + mu.pow(2).sum() - d - 2*logsigma.sum())
 
-        #breakpoint()
-        # print((logsigmasq.abs().min().item(), logsigmasq.abs().max().item()))
+        # print((logsigma.abs().min().item(), logsigma.abs().max().item()))
 
         return kl
 
