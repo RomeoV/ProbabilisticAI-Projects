@@ -124,7 +124,7 @@ class BayesianLayer(torch.nn.Module):
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
-            self.bias_logsigmasq = nn.Parameter(torch.zeros(output_dim))
+            self.bias_logsigmasq = nn.Parameter(torch.ones(output_dim))
         else:
             self.register_parameter('bias_mu', None)
             self.register_parameter('bias_logsigma', None)
@@ -144,12 +144,15 @@ class BayesianLayer(torch.nn.Module):
                 self.bias_logsigmasq.exp(),
         )
 
+        normal = torch.distributions.Normal(0, 1)
+
         if self.use_bias:
             # TODO: enter your code here
-            W = weight_distribution.rsample()
-            b = bias_distribution.rsample()
+            eps_W = normal.sample(sample_shape=self.weight_mu.weight.size())
+            eps_b = normal.sample(sample_shape=(self.weight_mu.weight.size()[0],))
+            W = self.weight_logsigmasq.weight.exp().sqrt() * eps_W + self.weight_mu.weight
+            b = self.bias_logsigmasq.exp().sqrt() * eps_b + self.bias_mu
             y = inputs @ W.t() + b
-            pass
         else:
             bias = None
             W = weight_distribution.rsample()
@@ -257,6 +260,7 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
 
     pbar = trange(num_epochs)
     for i in pbar:
+        num_batches = 60000//128
         for k, (batch_x, batch_y) in enumerate(train_loader):
             model.zero_grad()
             y_pred = model(batch_x)
@@ -266,7 +270,8 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
-                loss += model.kl_loss().squeeze()
+                loss = loss * 128  # mul by batch size
+                loss += model.kl_loss().squeeze() / num_batches
             loss.backward()
             optimizer.step()
 
