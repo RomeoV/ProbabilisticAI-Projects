@@ -219,13 +219,8 @@ class BayesNet(torch.nn.Module):
         print(self.net)
 
 
-    def forward(self, x, num_forward_passes=1):
-        batch_size = x.shape[0]
-        results = torch.zeros(num_forward_passes, batch_size, 10)
-        for i in range(num_forward_passes):
-            results[i] = self.net(x)
-        logits = results.mean(0)
-        return logits
+    def forward(self, x):
+        return self.net(x)
 
 
     def predict_class_probs(self, x, num_forward_passes=10):
@@ -236,7 +231,10 @@ class BayesNet(torch.nn.Module):
         # compute the categorical softmax probabilities
         # marginalize the probabilities over the n forward passes
 
-        probs = self.forward(x, num_forward_passes).softmax(-1)
+        results = torch.zeros(num_forward_passes, batch_size, 10)
+        for i in range(num_forward_passes):
+            results[i] = self.forward(x)
+        probs = results.mean(0).softmax(-1)
 
         assert probs.shape == (batch_size, 10)
         assert (probs[0,:].sum() - 1).abs() < 1e-5
@@ -254,7 +252,7 @@ class BayesNet(torch.nn.Module):
 
         return kl_divergences_prior
 
-def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_interval=100):
+def train_network(model, optimizer, scheduler, train_loader, num_epochs=100, pbar_update_interval=100):
     '''
     Updates the model parameters (in place) using the given optimizer object.
     Returns `None`.
@@ -266,6 +264,7 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
     criterion = torch.nn.CrossEntropyLoss()  # always used in this assignment
 
     pbar = trange(num_epochs)
+    M = max(k for (k, (batch_x, batch_y)) in enumerate(train_loader))
     for i in pbar:
         for k, (batch_x, batch_y) in enumerate(train_loader):
             model.zero_grad()
@@ -274,17 +273,18 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
-                loss += model.kl_loss().squeeze()
+                pi = (2**(M-(k+1)))/(2**M - 1)
+                loss += pi * model.kl_loss().squeeze()
                 if i%10 == 0 and k == 0:
-                    print(f"Loss: {criterion(y_pred, batch_y):.3f}, {model.kl_loss().squeeze():.3f}")
+                    print(f"Loss (likelihood, complexity, pi): {criterion(y_pred, batch_y):.3f}, {model.kl_loss().squeeze():.3f}, {pi:.3f}")
             loss.backward()
             optimizer.step()
 
             if k % pbar_update_interval == 0:
-                acc = (model(batch_x).argmax(axis=1) == batch_y).sum().float()/(len(batch_y))
+                acc = (model.predict_class_probs(batch_x).argmax(axis=1) == batch_y).sum().float()/(len(batch_y))
                 pbar.set_postfix(loss=loss.item(), acc=acc.item())
-            if i == 50:
-                breakpoint()
+
+        scheduler.step()
 
 
 def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, private_test):
@@ -380,8 +380,8 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
 
 def main(test_loader=None, private_test=False):
     num_epochs = 100 # You might want to adjust this
-    batch_size = 128  # Try playing around with this
-    print_interval = 100
+    batch_size = 2048  # Try playing around with this
+    print_interval = 200
     learning_rate = 1e-3  # Try playing around with this
     model_type = "bayesnet"  # Try changing this to "densenet" as a comparison
     extended_evaluation = False  # Set this to True for additional model evaluation
@@ -396,7 +396,8 @@ def main(test_loader=None, private_test=False):
         model = Densenet(input_size=784, num_layers=2, width=100)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    train_network(model, optimizer, train_loader,
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizer, milestones=(50,), gamma=0.1)
+    train_network(model, optimizer, scheduler, train_loader,
                  num_epochs=num_epochs, pbar_update_interval=print_interval)
 
     if test_loader is None:
