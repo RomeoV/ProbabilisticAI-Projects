@@ -108,7 +108,7 @@ class BayesianLayer(torch.nn.Module):
     (and biases) and uses the reparameterization trick for sampling.
     '''
 
-    def __init__(self, input_dim, output_dim, bias=False):
+    def __init__(self, input_dim, output_dim, bias=True):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -116,11 +116,12 @@ class BayesianLayer(torch.nn.Module):
 
         # TODO: enter your code here
         self.prior_mu = torch.tensor([0.], requires_grad=False)  # this we just guess
-        self.prior_sigma = torch.tensor([1.], requires_grad=False)
+        #self.prior_sigma = torch.tensor([0.1], requires_grad=False)
+        self.prior_sigma = torch.tensor([1.], requires_grad=False).sqrt()
         self.weight_mu = nn.Parameter(torch.zeros(output_dim, input_dim))
         self.weight_logsigma = nn.Parameter(torch.zeros(output_dim, input_dim))
-        nn.init.normal_(self.weight_mu, self.prior_mu.item(), self.prior_sigma.item())
-        nn.init.normal_(self.weight_logsigma, self.prior_mu.item(), self.prior_sigma.item())
+        nn.init.normal_(self.weight_mu, self.prior_mu.item(), self.prior_sigma.pow(2).item())
+        nn.init.normal_(self.weight_logsigma, self.prior_mu.item(), (self.prior_sigma.pow(2).item()/10))
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
@@ -145,12 +146,14 @@ class BayesianLayer(torch.nn.Module):
                     self.bias_logsigma.exp().pow(2),
             )
 
-        normal = torch.distributions.Normal(0, 1)
+        normal = torch.distributions.Normal(0, 0.05)
 
         if self.use_bias:
             # TODO: enter your code here
-            eps_W = normal.sample(sample_shape=self.weight_mu.size()).requires_grad_(False)
-            eps_b = normal.sample(sample_shape=(self.weight_mu.size()[0],)).requires_grad_(False)
+            eps_W = normal.sample(sample_shape=self.weight_mu.size())
+            eps_b = normal.sample(sample_shape=(self.weight_mu.size()[0],))
+            #eps_W = eps_W.mean(0)
+            #eps_b = eps_b.mean(0)
             W = self.weight_logsigma.exp() * eps_W + self.weight_mu
             b = self.bias_logsigma.exp() * eps_b + self.bias_mu
             #W = weight_distribution.rsample()
@@ -158,8 +161,7 @@ class BayesianLayer(torch.nn.Module):
             y = inputs @ W.t() + b
         else:
             bias = None
-            eps_W = normal.sample(sample_shape=(128, self.weight_mu.size()[0], self.weight_mu.size()[1])).requires_grad_(False)
-            eps_W = eps_W.mean(0)
+            eps_W = normal.sample(sample_shape=self.weight_mu.size()).requires_grad_(False)
             W = self.weight_logsigma.exp() * eps_W + self.weight_mu
             #W = weight_distribution.rsample()
             y = inputs @ W.t()
@@ -187,18 +189,20 @@ class BayesianLayer(torch.nn.Module):
         # TODO: enter your code here
 
         """ Full gaussian kl-divergence """
-        # kl = 1/2 * (1/(self.prior_sigma**2) * logsigma.exp().sum()
-        #             + (self.prior_mu - mu).pow(2).sum() / (self.prior_sigma**2)
-        #             - d
-        #             + ((self.prior_sigma**2).pow(d) / (logsigma.exp().prod() + 1e-6))
-        #             )
+        kl_gauss_full = 1/2 * (1/self.prior_sigma.pow(2) * logsigma.exp().pow(2).sum()
+                    + (self.prior_mu - mu).pow(2).sum() / (self.prior_sigma.pow(2))
+                    - d
+                    + (d*torch.log(self.prior_sigma**2) - 2*logsigma.sum())
+                    )
 
         """ Reduced gaussian kl-divergence """
-        kl = 1/2 * (logsigma.exp().pow(2).sum() + mu.pow(2).sum() - d - 2*logsigma.sum())
+        kl_gauss_simpl = 1/2 * (logsigma.exp().pow(2).sum() + mu.pow(2).sum() - d - 2*logsigma.sum())
+
+        #assert (kl_gauss_full - kl_gauss_simpl).abs() < 1e-4, f"{kl_gauss_full.item():.4f}, {kl_gauss_simpl.item():.4f}"
 
         # print((logsigma.abs().min().item(), logsigma.abs().max().item()))
 
-        return kl
+        return kl_gauss_full
 
 
 class BayesNet(torch.nn.Module):
@@ -207,7 +211,7 @@ class BayesNet(torch.nn.Module):
     BayesianLayer objects.
     '''
 
-    def __init__(self, input_size, num_layers, width):
+    def __init__(self, input_size, num_layers, width, temp=1):
         super().__init__()
         input_layer = torch.nn.Sequential(BayesianLayer(input_size, width),
                                            nn.ReLU())
@@ -216,6 +220,7 @@ class BayesNet(torch.nn.Module):
         output_layer = BayesianLayer(width, 10)
         layers = [input_layer, *hidden_layers, output_layer]
         self.net = torch.nn.Sequential(*layers)
+        self.temp = temp
         print(self.net)
 
 
@@ -234,10 +239,10 @@ class BayesNet(torch.nn.Module):
         results = torch.zeros(num_forward_passes, batch_size, 10)
         for i in range(num_forward_passes):
             results[i] = self.forward(x)
-        probs = results.mean(0).softmax(-1)
+        probs = (results.mean(0)/self.temp).softmax(-1)
 
         assert probs.shape == (batch_size, 10)
-        assert (probs[0,:].sum() - 1).abs() < 1e-5
+        assert (probs[0,:].sum() - 1).abs() < 1e-5, f"{probs[0,:].sum():.3f}"
         return probs
 
 
@@ -252,7 +257,7 @@ class BayesNet(torch.nn.Module):
 
         return kl_divergences_prior
 
-def train_network(model, optimizer, scheduler, train_loader, num_epochs=100, pbar_update_interval=100):
+def train_network(model, optimizer, scheduler, train_loader, num_epochs=100, pbar_update_interval=100, val_loader=None):
     '''
     Updates the model parameters (in place) using the given optimizer object.
     Returns `None`.
@@ -266,7 +271,7 @@ def train_network(model, optimizer, scheduler, train_loader, num_epochs=100, pba
     pbar = trange(num_epochs)
     M = max(k for (k, (batch_x, batch_y)) in enumerate(train_loader))
     for i in pbar:
-        for k, (batch_x, batch_y) in enumerate(train_loader):
+        for k, ((batch_x, batch_y), (batch_x_val, batch_y_val)) in enumerate(zip(train_loader, val_loader)):
             model.zero_grad()
             y_pred = model(batch_x)
             loss = criterion(y_pred, batch_y)
@@ -275,14 +280,18 @@ def train_network(model, optimizer, scheduler, train_loader, num_epochs=100, pba
                 # TODO: enter your code here
                 pi = (2**(M-(k+1)))/(2**M - 1)
                 loss += pi * model.kl_loss().squeeze()
-                if i%10 == 0 and k == 0:
+                if i%5 == 0 and k == 0:
                     print(f"Loss (likelihood, complexity, pi): {criterion(y_pred, batch_y):.3f}, {model.kl_loss().squeeze():.3f}, {pi:.3f}")
+                    if val_loader:
+                        evaluate_model(model, 'bayesnet', val_loader, 2000, False, False)
+                    torch.save(model, f"models/model-{i}")
             loss.backward()
             optimizer.step()
 
             if k % pbar_update_interval == 0:
                 acc = (model.predict_class_probs(batch_x).argmax(axis=1) == batch_y).sum().float()/(len(batch_y))
-                pbar.set_postfix(loss=loss.item(), acc=acc.item())
+                acc_val = (model.predict_class_probs(batch_x_val).argmax(axis=1) == batch_y_val).sum().float()/(len(batch_y_val))
+                pbar.set_postfix(loss=loss.item(), acc=acc.item(), val_acc=acc_val.item())
 
         scheduler.step()
 
@@ -380,15 +389,19 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
 
 def main(test_loader=None, private_test=False):
     num_epochs = 100 # You might want to adjust this
-    batch_size = 2048  # Try playing around with this
+    batch_size = 2000  # Try playing around with this
     print_interval = 200
     learning_rate = 1e-3  # Try playing around with this
     model_type = "bayesnet"  # Try changing this to "densenet" as a comparison
     extended_evaluation = False  # Set this to True for additional model evaluation
 
     dataset_train = load_rotated_mnist()
+    dataset_train, dataset_val = torch.utils.data.random_split(dataset_train, [55000, 5000])
     train_loader = torch.utils.data.DataLoader(dataset_train, batch_size=batch_size,
                                                shuffle=True, drop_last=True)
+    val_loader   = torch.utils.data.DataLoader(dataset_val  , batch_size=batch_size//20,
+                                               shuffle=True, drop_last=True)
+    torch.save(val_loader, 'val_loader')
 
     if model_type == "bayesnet":
         model = BayesNet(input_size=784, num_layers=2, width=100)
@@ -396,9 +409,10 @@ def main(test_loader=None, private_test=False):
         model = Densenet(input_size=784, num_layers=2, width=100)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizer, milestones=(50,), gamma=0.1)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizer, milestones=(30,60), gamma=0.5)
     train_network(model, optimizer, scheduler, train_loader,
-                 num_epochs=num_epochs, pbar_update_interval=print_interval)
+                 num_epochs=num_epochs, pbar_update_interval=print_interval, val_loader=val_loader)
+    torch.save(model, 'model')
 
     if test_loader is None:
         print("evaluating on train data")
