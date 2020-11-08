@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import torch
 import os
@@ -113,14 +114,18 @@ class BayesianLayer(torch.nn.Module):
         self.use_bias = bias
 
         # TODO: enter your code here
-        #self.prior_mu = ?
-        #self.prior_sigma = ?
-        #self.weight_mu = nn.?
-        #self.weight_logsigma = ?
+        self.prior_mu = 0.0
+        self.prior_sigma = 1.0
+        self.weight_mu = nn.Parameter(torch.zeros(output_dim, input_dim))
+        self.weight_logsigma = nn.Parameter(torch.zeros(output_dim, input_dim))
+        nn.init.normal_(self.weight_mu, self.prior_mu, self.prior_sigma)
+        nn.init.normal_(self.weight_logsigma, self.prior_mu, self.prior_sigma)
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
             self.bias_logsigma = nn.Parameter(torch.zeros(output_dim))
+            # nn.init.normal_(self.bias_mu, self.prior_mu, self.prior_sigma)
+            # nn.init.normal_(self.bias_logsigma, self.prior_mu, self.prior_sigma)
         else:
             self.register_parameter('bias_mu', None)
             self.register_parameter('bias_logsigma', None)
@@ -128,14 +133,26 @@ class BayesianLayer(torch.nn.Module):
 
     def forward(self, inputs):
         # TODO: enter your code here
+        shrink = 0.1
+
+        weight = torch.distributions.Normal(self.weight_mu, shrink * self.weight_logsigma.exp())
+
+        W = weight.rsample()
+
+        outputs = torch.mm(inputs, W.t())
 
         if self.use_bias:
             # TODO: enter your code here
+            bias = torch.distributions.Normal(self.bias_mu, shrink * self.bias_logsigma.exp())
+
+            b = bias.rsample()
+
+            outputs.add_(b)
         else:
             bias = None
 
         # TODO: enter your code here
-        # return ?
+        return outputs
 
 
     def kl_divergence(self):
@@ -155,6 +172,23 @@ class BayesianLayer(torch.nn.Module):
         '''
 
         # TODO: enter your code here
+        # KL(p||q) for p and q Gaussian distributions with diagonal covariance matrices
+        # p = N(mu_0, sigma_0)
+        # q = N(mu_1, sigma_1) -> prior
+        d = mu.numel()
+        kl = 0.5 * ( ( logsigma.exp() / self.prior_sigma ).pow(2).sum()
+                   + ( (self.prior_mu - mu) / self.prior_sigma ).pow(2).sum()
+                   - d + ( 2 * d * math.log(self.prior_sigma) - 2 * logsigma.sum() ) )
+
+        # KL(p||q) for p = N([mu_1, ..., mu_d], diag([sigma_1**2, ..., sigma_d**2]))
+        #          and q = N(0, I)
+        # kl2 = 0.5 * (logsigma.exp().pow(2).sum() + mu.pow(2).sum() - d - 2.0 * logsigma.sum())
+
+        # relerr = (kl - kl2).abs() / kl.abs()
+
+        # print(kl, kl2, relerr)
+
+        # assert relerr < 1e-6, f"{kl.item():.4f}, {kl2.item():.4f}"
 
         return kl
 
@@ -186,6 +220,10 @@ class BayesNet(torch.nn.Module):
         # TODO: make n random forward passes
         # compute the categorical softmax probabilities
         # marginalize the probabilities over the n forward passes
+        outputs = torch.zeros(num_forward_passes, batch_size, 10)
+        for i in range(num_forward_passes):
+            outputs[i] = self.forward(x)
+        probs = F.softmax(outputs.mean(0), dim=-1)
 
         assert probs.shape == (batch_size, 10)
         return probs
@@ -196,6 +234,11 @@ class BayesNet(torch.nn.Module):
         Computes the KL divergence loss for all layers.
         '''
         # TODO: enter your code here
+        kl = self.net[-1].kl_divergence()
+        for layer in self.net[:-1]:
+            kl += layer[0].kl_divergence()
+
+        return kl
 
 
 def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_interval=100):
@@ -217,6 +260,7 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
+                loss += model.kl_loss() / len(train_loader)
             loss.backward()
             optimizer.step()
 
