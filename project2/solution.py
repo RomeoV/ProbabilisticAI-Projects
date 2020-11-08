@@ -242,7 +242,7 @@ class BayesNet(torch.nn.Module):
         return kl
 
 
-def train_network(model, optimizer, scheduler, train_loader, num_epochs=100, pbar_update_interval=100):
+def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_interval=100):
     '''
     Updates the model parameters (in place) using the given optimizer object.
     Returns `None`.
@@ -268,7 +268,6 @@ def train_network(model, optimizer, scheduler, train_loader, num_epochs=100, pba
             if k % pbar_update_interval == 0:
                 acc = (model(batch_x).argmax(axis=1) == batch_y).sum().float()/(len(batch_y))
                 pbar.set_postfix(loss=loss.item(), acc=acc.item())
-        scheduler.step()
 
 
 def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, private_test):
@@ -364,9 +363,9 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
 
 def main(test_loader=None, private_test=False):
     num_epochs = 100 # You might want to adjust this
-    batch_size = 512  # Try playing around with this
+    batch_size = 128  # Try playing around with this
     print_interval = 100
-    learning_rate = 1e-3  # Try playing around with this
+    learning_rate = 5e-4  # Try playing around with this
     model_type = "bayesnet"  # Try changing this to "densenet" as a comparison
     extended_evaluation = False  # Set this to True for additional model evaluation
 
@@ -375,13 +374,12 @@ def main(test_loader=None, private_test=False):
                                                shuffle=True, drop_last=True)
 
     if model_type == "bayesnet":
-        model = BayesNet(input_size=784, num_layers=2, width=200)
+        model = BayesNet(input_size=784, num_layers=2, width=100)
     elif model_type == "densenet":
         model = Densenet(input_size=784, num_layers=2, width=100)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizer, milestones=(30,60), gamma=0.2)
-    train_network(model, optimizer, scheduler, train_loader,
+    train_network(model, optimizer, train_loader,
                  num_epochs=num_epochs, pbar_update_interval=print_interval)
 
     if test_loader is None:
