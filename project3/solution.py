@@ -29,7 +29,9 @@ class BO_algo:
         self.μv_prior = 1.5
         self.var_v = sqrt(2)
         self.σ_v = 0.0001
+
         self.κ = 1.2  # v_min
+        self.β = 2.
 
         self.xs = torch.zeros(0,domain_t.shape[0]).double()
         self.fs = torch.zeros(0).double()
@@ -105,12 +107,11 @@ class BO_algo:
 
         x = torch.tensor(x).unsqueeze(dim=0)
 
-        β = 2.
         k_xA = self.Matern_f(x, self.xs)
         μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
         σf_pred = torch.sqrt(self.Matern_f(x, x) - k_xA @ self.Kf_AA_sig2_inv @ k_xA.t())
 
-        return (μf_pred + β*σf_pred).item()
+        return (μf_pred + self.β*σf_pred).item()
 
 
     def get_mu_sigma(self, xs: torch.tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -234,7 +235,7 @@ def v(x):
     """Dummy speed"""
     return 2.0
 
-def train_agent(agent, n_iters=20):
+def train_agent(agent, n_iters=20, debug=False):
     # Loop until budget is exhausted
     for j in range(n_iters):
         # Get next recommendation
@@ -249,6 +250,12 @@ def train_agent(agent, n_iters=20):
         obj_val = f(x)
         cost_val = v(x)
         agent.add_data_point(x, obj_val, cost_val)
+        if debug:
+            M1 = agent.Kf_AA_sig2_inv
+            xs = agent.xs
+            M2 = (agent.Matern_f(xs, xs) + agent.σ_f**2 * torch.eye(xs.shape[0])).inverse()
+            print((M1 - M2).abs().sum())
+
 
     # Validate solution
     solution = np.atleast_2d(agent.get_solution())
