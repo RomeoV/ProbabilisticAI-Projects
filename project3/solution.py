@@ -31,13 +31,12 @@ class BO_algo:
         self.σ_v = 0.0001
         self.κ = 1.2  # v_min
 
-        self.xs = torch.zeros(0,domain_t.shape[0]).double()
+        self.xs = torch.zeros(0, domain_t.shape[0]).double()
         self.fs = torch.zeros(0).double()
         self.vs = torch.zeros(0).double()
 
-        self.Kf_AA_sig2_inv = torch.zeros(0,0).double()
-        self.Kv_AA_sig2_inv = torch.zeros(0,0).double()
-
+        self.Kf_AA_sig2_inv = torch.zeros(0, 0).double()
+        self.Kv_AA_sig2_inv = torch.zeros(0, 0).double()
 
     def next_recommendation(self):
         """
@@ -58,7 +57,6 @@ class BO_algo:
             retval = self.optimize_acquisition_function()
         return np.atleast_2d(retval)
 
-
     def optimize_acquisition_function(self):
         """
         Optimizes the acquisition function.
@@ -78,7 +76,7 @@ class BO_algo:
         # Restarts the optimization 20 times and pick best solution
         for _ in range(20):
             x0 = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * \
-                 np.random.rand(domain.shape[0])
+                np.random.rand(domain.shape[0])
             result = fmin_l_bfgs_b(objective, x0=x0, bounds=domain,
                                    approx_grad=True)
             x_values.append(np.clip(result[0], *domain[0]))
@@ -86,7 +84,6 @@ class BO_algo:
 
         ind = np.argmax(f_values)
         return np.atleast_2d(x_values[ind])
-
 
     def acquisition_function(self, x):
         """
@@ -104,21 +101,25 @@ class BO_algo:
         """
 
         x = torch.tensor(x).unsqueeze(dim=0)
+        Ɛ = 0.1
 
         β = 2.
-        k_xA = self.Matern_f(x, self.xs)
-        μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
-        σf_pred = torch.sqrt(self.Matern_f(x, x) - k_xA @ self.Kf_AA_sig2_inv @ k_xA.t())
+        k_xAf = self.Matern_f(x, self.xs)
+        μf_pred = self.μf_prior + k_xAf @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
+        σf_pred = torch.sqrt(self.Matern_f(x, x) - k_xAf @ self.Kf_AA_sig2_inv @ k_xAf.t())
 
-        return (μf_pred + β*σf_pred).item()
+        β2 = 2.
+        k_xAv = self.Matern_v(x, self.xs)
+        μv_pred = self.μv_prior + k_xAv @ self.Kv_AA_sig2_inv @ (self.vs - self.μv_prior)
+        σv_pred = torch.sqrt(self.Matern_v(x, x) - k_xAv @ self.Kv_AA_sig2_inv @ k_xAv.t())
 
+        return Ɛ*(μf_pred + β*σf_pred).item()+(1-Ɛ)*(μv_pred + β2*σv_pred).item()
 
     def get_mu_sigma(self, xs: torch.tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         k_xA = self.Matern_f(xs, self.xs)
         μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
         σf_pred = torch.sqrt(self.Matern_f(xs, xs).diagonal() - (k_xA @ self.Kf_AA_sig2_inv @ k_xA.t()).diagonal())
         return μf_pred, σf_pred
-
 
     def add_data_point(self, x, f, v):
         """
@@ -161,7 +162,6 @@ class BO_algo:
         self.fs = torch.cat((self.fs, f), dim=0)
         self.vs = torch.cat((self.vs, v), dim=0)
 
-
     def get_solution(self):
         """
         Return x_opt that is believed to be the maximizer of f.
@@ -175,8 +175,7 @@ class BO_algo:
         # TODO: enter your code here
         return self.xs[self.fs.argmax()]
 
-
-    @staticmethod
+    @ staticmethod
     def _get_blockwise_inverse(A_inv, B, C, D):
         """ Efficient matrix inversion using Schur Complement
 
@@ -187,7 +186,7 @@ class BO_algo:
         C_ = -S_A C A^{-1}, or just B_^T if M symmetric
         D_ = S_A
         and S_A = D - C A^{-1} B.
-        
+
         For us, A = K_AA + \sigma^2 I
         B = k(xs, x_new), C = B_
         D = k(x_new, x_new) + \sigma^2
@@ -216,6 +215,7 @@ class BO_algo:
 
 
 """ Toy problem to check code works as expected """
+
 
 def check_in_domain(x):
     """Validate input"""
@@ -279,7 +279,7 @@ if __name__ == "__main__":
 
     try:
         import matplotlib.pyplot as plt
-        xs = torch.linspace(0,5)
+        xs = torch.linspace(0, 5)
         ys = np.array(list(map(f, xs)))
         mus, sigs = agent.get_mu_sigma(xs.unsqueeze(1))
         plt.plot(xs, ys)
