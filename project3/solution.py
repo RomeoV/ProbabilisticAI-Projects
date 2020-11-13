@@ -141,6 +141,7 @@ class BO_algo:
         v = torch.tensor(v).unsqueeze(dim=0)
 
         # First for f
+        assert(x.shape[0] == 1)
         Af_inv = self.Kf_AA_sig2_inv
         Bf = self.Matern_f(self.xs, x)
         Cf = Bf.t()
@@ -203,12 +204,12 @@ class BO_algo:
             M[N, N] = D
             return M
 
-        S_A = D - C @ A_inv @ B
+        S_A_inv = (D - C @ A_inv @ B).inverse()
 
-        A_ = A_inv + A_inv @ B @ S_A @ C @ A_inv
-        B_ = -A_inv @ B @ S_A
+        A_ = A_inv + A_inv @ B @ S_A_inv @ C @ A_inv
+        B_ = -A_inv @ B @ S_A_inv
         C_ = B_.t()
-        D_ = S_A
+        D_ = S_A_inv
 
         M_inv = _assemble_block_matrix(A_, B_, C_, D_)
 
