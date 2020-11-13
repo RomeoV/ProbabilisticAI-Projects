@@ -234,13 +234,9 @@ def v(x):
     """Dummy speed"""
     return 2.0
 
-
-def main():
-    # Init problem
-    agent = BO_algo()
-
+def train_agent(agent, n_iters=20):
     # Loop until budget is exhausted
-    for j in range(20):
+    for j in range(n_iters):
         # Get next recommendation
         x = agent.next_recommendation()
 
@@ -272,22 +268,28 @@ def main():
     print(f'Optimal value: 0\nProposed solution {solution}\nSolution value '
           f'{f(solution)}\nRegret{regret}')
 
-    return agent
-
-
-if __name__ == "__main__":
-    agent = main()
-
+def plot_agent(agent):
     try:
         import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
         xs = torch.linspace(0,5)
         ys = np.array(list(map(f, xs)))
         mus, sigs = agent.get_mu_sigma(xs.unsqueeze(1))
-        plt.plot(xs, ys)
-        plt.plot(xs, mus, '--')
-        plt.plot(xs, mus+sigs, '-.', c='g')
-        plt.plot(xs, mus-sigs, '-.', c='g')
-        plt.scatter(agent.xs, torch.zeros(agent.xs.shape[0]))
+        ax.plot(xs, ys, label="GT")
+        ax.plot(xs, mus, '--', label="Mean")
+        ax.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
+        ax.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
+        ax.scatter(agent.xs, agent.fs, label="Sample points")
+        ax.legend()
         plt.show()
     except ImportError:
         pass
+
+def main():
+    # Init problem
+    agent = BO_algo()
+    train_agent(agent)
+    plot_agent(agent)
+
+if __name__ == "__main__":
+    main()
