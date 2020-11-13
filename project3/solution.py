@@ -273,4 +273,18 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    agent = main()
+
+    try:
+        import matplotlib.pyplot as plt
+        xs = torch.linspace(0,5)
+        ys = np.array(list(map(f, xs)))
+        mus, sigs = agent.get_mu_sigma(xs.unsqueeze(1))
+        plt.plot(xs, ys)
+        plt.plot(xs, mus, '--')
+        plt.plot(xs, mus+sigs.diagonal(), '-.', c='g')
+        plt.plot(xs, mus-sigs.diagonal(), '-.', c='g')
+        plt.scatter(agent.xs, torch.zeros(agent.xs.shape[0]))
+        plt.show()
+    except ImportError:
+        pass
