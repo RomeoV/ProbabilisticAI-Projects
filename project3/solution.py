@@ -3,6 +3,7 @@ from math import sqrt
 from scipy.optimize import fmin_l_bfgs_b
 from sklearn.gaussian_process.kernels import Matern
 import torch
+from typing import Tuple
 
 domain = np.array([[0, 5]])
 domain_t = torch.tensor(domain)
@@ -52,6 +53,7 @@ class BO_algo:
         # In implementing this function, you may use optimize_acquisition_function() defined below.
         if (self.Kf_AA_sig2_inv.numel() == 0):
             retval = torch.tensor(domain).double().mean().unsqueeze(0).numpy()
+            retval = 1.0  # TODO change this
         else:
             retval = self.optimize_acquisition_function()
         return np.atleast_2d(retval)
@@ -106,9 +108,16 @@ class BO_algo:
         β = 2.
         k_xA = self.Matern_f(x, self.xs)
         μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
-        σ_pred = self.Matern_f(x, x) - k_xA @ self.Kf_AA_sig2_inv @ k_xA.t()
+        σf_pred = torch.sqrt(self.Matern_f(x, x) - k_xA @ self.Kf_AA_sig2_inv @ k_xA.t())
 
-        return (μf_pred + β*σ_pred).item()
+        return (μf_pred + β*σf_pred).item()
+
+
+    def get_mu_sigma(self, xs: torch.tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        k_xA = self.Matern_f(xs, self.xs)
+        μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
+        σf_pred = torch.sqrt(self.Matern_f(xs, xs).diagonal() - (k_xA @ self.Kf_AA_sig2_inv @ k_xA.t()).diagonal())
+        return μf_pred, σf_pred
 
 
     def add_data_point(self, x, f, v):
@@ -164,7 +173,7 @@ class BO_algo:
         """
 
         # TODO: enter your code here
-        raise NotImplementedError
+        return self.xs[self.fs.argmax()]
 
 
     @staticmethod
