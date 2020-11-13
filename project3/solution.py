@@ -148,7 +148,8 @@ class BO_algo:
         Cf = Bf.t()
         Df = self.Matern_f(x, x) + self.σ_f**2
 
-        self.Kf_AA_sig2_inv = self._get_blockwise_inverse(Af_inv, Bf, Cf, Df)
+        Mf_inv = self._get_blockwise_inverse(Af_inv, Bf, Cf, Df)
+
 
         # First for v
         Av_inv = self.Kv_AA_sig2_inv
@@ -156,12 +157,22 @@ class BO_algo:
         Cv = Bv.t()
         Dv = self.Matern_v(x, x) + self.σ_v**2
 
-        self.Kv_AA_sig2_inv = self._get_blockwise_inverse(Av_inv, Bv, Cv, Dv)
-
+        Mv_inv = self._get_blockwise_inverse(Av_inv, Bv, Cv, Dv)
+            
         # Append new values to data buffer
         self.xs = torch.cat((self.xs, x), dim=0)
         self.fs = torch.cat((self.fs, f), dim=0)
         self.vs = torch.cat((self.vs, v), dim=0)
+
+        Mf = self.Matern_f(self.xs, self.xs) + self.σ_f**2 * torch.eye(self.xs.shape[0])
+        Mv = self.Matern_v(self.xs, self.xs) + self.σ_v**2 * torch.eye(self.xs.shape[0])
+        n = Mf.shape[0]
+        if n >= 1:
+            self.Kf_AA_sig2_inv = Mf_inv @ (torch.eye(n) + (torch.eye(n) - Mf @ Mf_inv))
+            self.Kv_AA_sig2_inv = Mv_inv @ (torch.eye(n) + (torch.eye(n) - Mv @ Mv_inv))
+        else:
+            self.Kf_AA_sig2_inv = Mf_inv
+            self.Kv_AA_sig2_inv = Mv_inv
 
 
     def get_solution(self):
