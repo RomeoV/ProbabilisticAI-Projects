@@ -19,7 +19,7 @@ class BO_algo:
         # GP parameters for f
         self.Matern_f_np = Matern(length_scale=0.5, nu=2.5)
         self.Matern_f = lambda x, y: self.var_f * torch.from_numpy(self.Matern_f_np(x, y))
-        self.μf_prior = 0.5
+        self.μf_prior = 0.0
         self.var_f = 0.5  # variance
         self.σ_f = 0.15  # measurement noise
 
@@ -275,10 +275,11 @@ def train_agent(agent, n_iters=20, debug=False):
     print(f'Optimal value: 0\nProposed solution {solution}\nSolution value '
           f'{f(solution)}\nRegret{regret}')
 
-def plot_agent(agent):
+def plot_agent(agent, ax=None):
     try:
         import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
+        if ax == None:
+            fig, ax = plt.subplots()
         xs = torch.linspace(0,5)
         ys = np.array(list(map(f, xs)))
         mus, sigs = agent.get_mu_sigma(xs.unsqueeze(1))
@@ -288,14 +289,13 @@ def plot_agent(agent):
         ax.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
         ax.scatter(agent.xs, agent.fs, label="Sample points")
         ax.legend()
-        plt.show()
     except ImportError:
         pass
 
 def main():
     # Init problem
     agent = BO_algo()
-    train_agent(agent)
+    train_agent(agent, debug=True)
     plot_agent(agent)
 
 if __name__ == "__main__":
