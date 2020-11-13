@@ -271,6 +271,8 @@ def main():
     print(f'Optimal value: 0\nProposed solution {solution}\nSolution value '
           f'{f(solution)}\nRegret{regret}')
 
+    return agent
+
 
 if __name__ == "__main__":
     agent = main()
@@ -282,8 +284,8 @@ if __name__ == "__main__":
         mus, sigs = agent.get_mu_sigma(xs.unsqueeze(1))
         plt.plot(xs, ys)
         plt.plot(xs, mus, '--')
-        plt.plot(xs, mus+sigs.diagonal(), '-.', c='g')
-        plt.plot(xs, mus-sigs.diagonal(), '-.', c='g')
+        plt.plot(xs, mus+sigs, '-.', c='g')
+        plt.plot(xs, mus-sigs, '-.', c='g')
         plt.scatter(agent.xs, torch.zeros(agent.xs.shape[0]))
         plt.show()
     except ImportError:
