@@ -82,7 +82,7 @@ class BO_algo:
             x0 = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * \
                  np.random.rand(domain.shape[0])
             result = fmin_l_bfgs_b(objective, x0=x0, bounds=domain,
-                                   approx_grad=True)
+                                   approx_grad=True, factr=1e13)
             x_values.append(np.clip(result[0], *domain[0]))
             f_values.append(-result[1])
 
