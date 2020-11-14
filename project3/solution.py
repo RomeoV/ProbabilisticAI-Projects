@@ -28,7 +28,7 @@ class BO_algo:
         self.Matern_v = lambda x, y: self.var_v * torch.from_numpy(self.Matern_v_np(x, y))
         self.μv_prior = 1.5
         self.var_v = sqrt(2)
-        self.σ_v = 0.0001
+        self.σ_v = 0.1001  # TODO: Change this back
 
         self.κ = 1.2  # v_min
         self.β = 2.
@@ -61,7 +61,7 @@ class BO_algo:
         return np.atleast_2d(retval)
 
     def next_recommendation_thompson(self):
-        if self.xs.shape[0] > 1:
+        if self.xs.shape[0] > 3:
             xs = torch.linspace(domain[0,0], domain[0,1], steps=8).unsqueeze(1)
 
             mus_f, var_f = self.get_mu_sigma_f(xs, full_cov=True)
