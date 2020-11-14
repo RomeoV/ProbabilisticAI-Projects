@@ -101,19 +101,21 @@ class BO_algo:
         """
 
         x = torch.tensor(x).unsqueeze(dim=0)
-        Ɛ = 0.1
+        Ɛ = 0.5
 
-        β = 2.
+        β = 1.
         k_xAf = self.Matern_f(x, self.xs)
         μf_pred = self.μf_prior + k_xAf @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
         σf_pred = torch.sqrt(self.Matern_f(x, x) - k_xAf @ self.Kf_AA_sig2_inv @ k_xAf.t())
 
-        β2 = 2.
+        β2 = 1.
         k_xAv = self.Matern_v(x, self.xs)
-        μv_pred = self.μv_prior + k_xAv @ self.Kv_AA_sig2_inv @ (self.vs - self.μv_prior)
+        μv_pred = 1.5
         σv_pred = torch.sqrt(self.Matern_v(x, x) - k_xAv @ self.Kv_AA_sig2_inv @ k_xAv.t())
-
-        return Ɛ*(μf_pred + β*σf_pred).item()+(1-Ɛ)*(μv_pred + β2*σv_pred).item()
+        if(2*σv_pred > μv_pred-1.2):
+            return Ɛ*(μf_pred + β*σf_pred).item()+(1-Ɛ)*(μv_pred + β2*σv_pred).item()
+        else:
+            return (μf_pred + β*σf_pred).item()
 
     def get_mu_sigma(self, xs: torch.tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         k_xA = self.Matern_f(xs, self.xs)
@@ -142,6 +144,7 @@ class BO_algo:
         v = torch.tensor(v).unsqueeze(dim=0)
 
         # First for f
+        assert(x.shape[0] == 1)
         Af_inv = self.Kf_AA_sig2_inv
         Bf = self.Matern_f(self.xs, x)
         Cf = Bf.t()
@@ -202,12 +205,12 @@ class BO_algo:
             M[N, N] = D
             return M
 
-        S_A = D - C @ A_inv @ B
+        S_A_inv = (D - C @ A_inv @ B).inverse()
 
-        A_ = A_inv + A_inv @ B @ S_A @ C @ A_inv
-        B_ = -A_inv @ B @ S_A
+        A_ = A_inv + A_inv @ B @ S_A_inv @ C @ A_inv
+        B_ = -A_inv @ B @ S_A_inv
         C_ = B_.t()
-        D_ = S_A
+        D_ = S_A_inv
 
         M_inv = _assemble_block_matrix(A_, B_, C_, D_)
 
@@ -234,12 +237,9 @@ def v(x):
     return 2.0
 
 
-def main():
-    # Init problem
-    agent = BO_algo()
-
+def train_agent(agent, n_iters=20):
     # Loop until budget is exhausted
-    for j in range(20):
+    for j in range(n_iters):
         # Get next recommendation
         x = agent.next_recommendation()
 
@@ -271,22 +271,31 @@ def main():
     print(f'Optimal value: 0\nProposed solution {solution}\nSolution value '
           f'{f(solution)}\nRegret{regret}')
 
-    return agent
 
-
-if __name__ == "__main__":
-    agent = main()
-
+def plot_agent(agent):
     try:
         import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
         xs = torch.linspace(0, 5)
         ys = np.array(list(map(f, xs)))
         mus, sigs = agent.get_mu_sigma(xs.unsqueeze(1))
-        plt.plot(xs, ys)
-        plt.plot(xs, mus, '--')
-        plt.plot(xs, mus+sigs, '-.', c='g')
-        plt.plot(xs, mus-sigs, '-.', c='g')
-        plt.scatter(agent.xs, torch.zeros(agent.xs.shape[0]))
+        ax.plot(xs, ys, label="GT")
+        ax.plot(xs, mus, '--', label="Mean")
+        ax.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
+        ax.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
+        ax.scatter(agent.xs, agent.fs, label="Sample points")
+        ax.legend()
         plt.show()
     except ImportError:
         pass
+
+
+def main():
+    # Init problem
+    agent = BO_algo()
+    train_agent(agent)
+    plot_agent(agent)
+
+
+if __name__ == "__main__":
+    main()
