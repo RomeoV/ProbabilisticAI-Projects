@@ -108,17 +108,34 @@ class BO_algo:
         x = torch.tensor(x).unsqueeze(dim=0)
 
         k_xA = self.Matern_f(x, self.xs)
-        μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
-        σf_pred = torch.sqrt(self.Matern_f(x, x) - k_xA @ self.Kf_AA_sig2_inv @ k_xA.t())
+        k_xA_times_Kf_AA_sig2_inv = k_xA @ self.Kf_AA_sig2_inv  
+        μf_pred = self.μf_prior + k_xA_times_Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
+        σf_pred = torch.sqrt(self.Matern_f(x, x) - k_xA_times_Kf_AA_sig2_inv @ k_xA.t())
 
         return (μf_pred + self.β*σf_pred).item()
 
 
-    def get_mu_sigma(self, xs: torch.tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_mu_sigma_f(self, xs: torch.tensor, full_cov=False) -> Tuple[torch.Tensor, torch.Tensor]:
         k_xA = self.Matern_f(xs, self.xs)
         μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
-        σf_pred = torch.sqrt(self.Matern_f(xs, xs).diagonal() - (k_xA @ self.Kf_AA_sig2_inv @ k_xA.t()).diagonal())
-        return μf_pred, σf_pred
+        if not full_cov:
+            σf_pred = torch.sqrt(self.Matern_f(xs, xs).diagonal() - (k_xA @ self.Kf_AA_sig2_inv @ k_xA.t()).diagonal())
+            return μf_pred, σf_pred
+        else:
+            Σf_pred = self.Matern_f(xs, xs) - (k_xA @ self.Kf_AA_sig2_inv @ k_xA.t())
+            return μf_pred, Σf_pred
+
+
+    def get_mu_sigma_v(self, xs: torch.tensor, full_cov=False) -> Tuple[torch.Tensor, torch.Tensor]:
+        k_xA = self.Matern_v(xs, self.xs)
+        μv_pred = self.μv_prior + k_xA @ self.Kv_AA_sig2_inv @ (self.vs - self.μv_prior)
+        if not full_cov:
+            σv_pred = torch.sqrt(self.Matern_v(xs, xs).diagonal() - (k_xA @ self.Kv_AA_sig2_inv @ k_xA.t()).diagonal())
+            return μv_pred, σv_pred
+        else:
+            Σv_pred = self.Matern_v(xs, xs) - (k_xA @ self.Kv_AA_sig2_inv @ k_xA.t())
+            breakpoint()
+            return μv_pred, Σv_pred
 
 
     def add_data_point(self, x, f, v):
@@ -151,7 +168,7 @@ class BO_algo:
         Mf_inv = self._get_blockwise_inverse(Af_inv, Bf, Cf, Df)
 
 
-        # First for v
+        # Then for v
         Av_inv = self.Kv_AA_sig2_inv
         Bv = self.Matern_v(self.xs, x)
         Cv = Bv.t()
