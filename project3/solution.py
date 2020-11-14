@@ -264,7 +264,8 @@ def f(x):
 
 def v(x):
     """Dummy speed"""
-    return 2.0
+    return np.cos(x).squeeze()
+    #return 2.0
 
 def train_agent(agent, n_iters=20, debug=False):
     # Loop until budget is exhausted
@@ -314,16 +315,29 @@ def plot_agent(agent, ax=None):
     try:
         import matplotlib.pyplot as plt
         if ax == None:
-            fig, ax = plt.subplots()
+            fig, (ax1, ax2) = plt.subplots(1,2)
         xs = torch.linspace(0,5)
+        # Plot f
         ys = np.array(list(map(f, xs)))
-        mus, sigs = agent.get_mu_sigma(xs.unsqueeze(1))
-        ax.plot(xs, ys, label="GT")
-        ax.plot(xs, mus, '--', label="Mean")
-        ax.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
-        ax.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
-        ax.scatter(agent.xs, agent.fs, label="Sample points")
-        ax.legend()
+        mus, sigs = agent.get_mu_sigma_f(xs.unsqueeze(1))
+        ax1.plot(xs, ys, label="GT")
+        ax1.plot(xs, mus, '--', label="Mean")
+        ax1.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
+        ax1.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
+        ax1.scatter(agent.xs, agent.fs, label="Sample points")
+        ax1.legend()
+        ax1.set_title("f", fontsize=16)
+
+        # Plot v
+        ys = np.array(list(map(v, xs)))
+        mus, sigs = agent.get_mu_sigma_v(xs.unsqueeze(1))
+        ax2.plot(xs, ys, label="GT")
+        ax2.plot(xs, mus, '--', label="Mean")
+        ax2.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
+        ax2.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
+        ax2.scatter(agent.xs, agent.vs, label="Sample points")
+        ax2.legend()
+        ax2.set_title("v", fontsize=16)
     except ImportError:
         pass
 
