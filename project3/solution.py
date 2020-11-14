@@ -185,6 +185,9 @@ class BO_algo:
         Mv = self.Matern_v(self.xs, self.xs) + self.σ_v**2 * torch.eye(self.xs.shape[0])
         n = Mf.shape[0]
         if n >= 1:
+            for i in range(2):
+                Mf_inv = Mf_inv @ (torch.eye(n) + (torch.eye(n) - Mf @ Mf_inv))
+                Mv_inv = Mv_inv @ (torch.eye(n) + (torch.eye(n) - Mv @ Mv_inv))
             self.Kf_AA_sig2_inv = Mf_inv @ (torch.eye(n) + (torch.eye(n) - Mf @ Mf_inv))
             self.Kv_AA_sig2_inv = Mv_inv @ (torch.eye(n) + (torch.eye(n) - Mv @ Mv_inv))
         else:
@@ -279,10 +282,14 @@ def train_agent(agent, n_iters=20, debug=False):
         cost_val = v(x)
         agent.add_data_point(x, obj_val, cost_val)
         if debug:
-            M1 = agent.Kf_AA_sig2_inv
+            M1f = agent.Kf_AA_sig2_inv
             xs = agent.xs
-            M2 = (agent.Matern_f(xs, xs) + agent.σ_f**2 * torch.eye(xs.shape[0])).inverse()
-            print((M1 - M2).abs().sum())
+            M2f = (agent.Matern_f(xs, xs) + agent.σ_f**2 * torch.eye(xs.shape[0])).inverse()
+
+            M1v = agent.Kv_AA_sig2_inv
+            xs = agent.xs
+            M2v = (agent.Matern_v(xs, xs) + agent.σ_v**2 * torch.eye(xs.shape[0])).inverse()
+            print(f"F/V-error: {(M1f - M2f).abs().sum().item():.2E}, {(M1v - M2v).abs().sum().item():.2E}")
 
 
     # Validate solution
