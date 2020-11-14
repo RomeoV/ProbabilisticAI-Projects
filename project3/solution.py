@@ -19,7 +19,7 @@ class BO_algo:
         # GP parameters for f
         self.Matern_f_np = Matern(length_scale=0.5, nu=2.5)
         self.Matern_f = lambda x, y: self.var_f * torch.from_numpy(self.Matern_f_np(x, y))
-        self.μf_prior = 0.5
+        self.μf_prior = 0.0
         self.var_f = 0.5  # variance
         self.σ_f = 0.15  # measurement noise
 
@@ -29,7 +29,9 @@ class BO_algo:
         self.μv_prior = 1.5
         self.var_v = sqrt(2)
         self.σ_v = 0.0001
+
         self.κ = 1.2  # v_min
+        self.β = 2.
 
         self.xs = torch.zeros(0, domain_t.shape[0]).double()
         self.fs = torch.zeros(0).double()
@@ -101,6 +103,7 @@ class BO_algo:
         """
 
         x = torch.tensor(x).unsqueeze(dim=0)
+
         Ɛ = 0.5
 
         β = 1.
@@ -150,7 +153,7 @@ class BO_algo:
         Cf = Bf.t()
         Df = self.Matern_f(x, x) + self.σ_f**2
 
-        self.Kf_AA_sig2_inv = self._get_blockwise_inverse(Af_inv, Bf, Cf, Df)
+        Mf_inv = self._get_blockwise_inverse(Af_inv, Bf, Cf, Df)
 
         # First for v
         Av_inv = self.Kv_AA_sig2_inv
@@ -158,13 +161,28 @@ class BO_algo:
         Cv = Bv.t()
         Dv = self.Matern_v(x, x) + self.σ_v**2
 
-        self.Kv_AA_sig2_inv = self._get_blockwise_inverse(Av_inv, Bv, Cv, Dv)
+        Mv_inv = self._get_blockwise_inverse(Av_inv, Bv, Cv, Dv)
 
         # Append new values to data buffer
         self.xs = torch.cat((self.xs, x), dim=0)
         self.fs = torch.cat((self.fs, f), dim=0)
         self.vs = torch.cat((self.vs, v), dim=0)
 
+
+<< << << < HEAD
+== == == =
+        Mf = self.Matern_f(self.xs, self.xs) + self.σ_f**2 * torch.eye(self.xs.shape[0])
+        Mv = self.Matern_v(self.xs, self.xs) + self.σ_v**2 * torch.eye(self.xs.shape[0])
+        n = Mf.shape[0]
+        if n >= 1:
+            self.Kf_AA_sig2_inv = Mf_inv @ (torch.eye(n) + (torch.eye(n) - Mf @ Mf_inv))
+            self.Kv_AA_sig2_inv = Mv_inv @ (torch.eye(n) + (torch.eye(n) - Mv @ Mv_inv))
+        else:
+            self.Kf_AA_sig2_inv = Mf_inv
+            self.Kv_AA_sig2_inv = Mv_inv
+
+
+>>>>>> > f204968cc6c69c271d7ed05a9034139ed690c54b
     def get_solution(self):
         """
         Return x_opt that is believed to be the maximizer of f.
@@ -237,7 +255,17 @@ def v(x):
     return 2.0
 
 
+<< << << < HEAD
+
+
 def train_agent(agent, n_iters=20):
+
+
+== == == =
+def train_agent(agent, n_iters=20, debug=False):
+
+
+>>>>>> > f204968cc6c69c271d7ed05a9034139ed690c54b
     # Loop until budget is exhausted
     for j in range(n_iters):
         # Get next recommendation
@@ -252,6 +280,11 @@ def train_agent(agent, n_iters=20):
         obj_val = f(x)
         cost_val = v(x)
         agent.add_data_point(x, obj_val, cost_val)
+        if debug:
+            M1 = agent.Kf_AA_sig2_inv
+            xs = agent.xs
+            M2 = (agent.Matern_f(xs, xs) + agent.σ_f**2 * torch.eye(xs.shape[0])).inverse()
+            print((M1 - M2).abs().sum())
 
     # Validate solution
     solution = np.atleast_2d(agent.get_solution())
@@ -271,12 +304,28 @@ def train_agent(agent, n_iters=20):
     print(f'Optimal value: 0\nProposed solution {solution}\nSolution value '
           f'{f(solution)}\nRegret{regret}')
 
+<< << << < HEAD
+
 
 def plot_agent(agent):
     try:
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
         xs = torch.linspace(0, 5)
+
+
+== == == =
+
+
+def plot_agent(agent, ax=None):
+    try:
+        import matplotlib.pyplot as plt
+        if ax == None:
+            fig, ax = plt.subplots()
+        xs = torch.linspace(0, 5)
+
+
+>>>>>> > f204968cc6c69c271d7ed05a9034139ed690c54b
         ys = np.array(list(map(f, xs)))
         mus, sigs = agent.get_mu_sigma(xs.unsqueeze(1))
         ax.plot(xs, ys, label="GT")
@@ -285,7 +334,6 @@ def plot_agent(agent):
         ax.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
         ax.scatter(agent.xs, agent.fs, label="Sample points")
         ax.legend()
-        plt.show()
     except ImportError:
         pass
 
@@ -293,7 +341,7 @@ def plot_agent(agent):
 def main():
     # Init problem
     agent = BO_algo()
-    train_agent(agent)
+    train_agent(agent, debug=True)
     plot_agent(agent)
 
 
