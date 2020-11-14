@@ -60,6 +60,22 @@ class BO_algo:
             retval = self.optimize_acquisition_function()
         return np.atleast_2d(retval)
 
+    def next_recommendation_thompson(self):
+        if self.xs.shape[0] > 1:
+            xs = torch.linspace(domain[0,0], domain[0,1], steps=8).unsqueeze(1)
+
+            mus_f, var_f = self.get_mu_sigma_f(xs, full_cov=True)
+            fs = torch.distributions.MultivariateNormal(mus_f, var_f).sample()
+
+            mus_v, var_v = self.get_mu_sigma_v(xs, full_cov=True)
+            vs = torch.distributions.MultivariateNormal(mus_v, var_v).sample()
+
+            obj = fs - (self.κ + 0.05 - vs).clamp(min=0.)
+            argmax = obj.argmax()
+            return np.atleast_2d(xs[argmax].numpy())
+        else:
+            return np.atleast_2d((torch.rand(1)*5).numpy())
+
 
     def optimize_acquisition_function(self):
         """
@@ -134,7 +150,6 @@ class BO_algo:
             return μv_pred, σv_pred
         else:
             Σv_pred = self.Matern_v(xs, xs) - (k_xA @ self.Kv_AA_sig2_inv @ k_xA.t())
-            breakpoint()
             return μv_pred, Σv_pred
 
 
@@ -271,7 +286,8 @@ def train_agent(agent, n_iters=20, debug=False):
     # Loop until budget is exhausted
     for j in range(n_iters):
         # Get next recommendation
-        x = agent.next_recommendation()
+        #x = agent.next_recommendation()
+        x = agent.next_recommendation_thompson()
 
         # Check for valid shape
         assert x.shape == (1, domain.shape[0]), \
