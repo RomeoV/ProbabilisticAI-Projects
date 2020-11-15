@@ -42,6 +42,9 @@ class BO_algo:
 
 
     def next_recommendation(self):
+        return self.next_recommendation_UCB()
+
+    def next_recommendation_UCB(self):
         """
         Recommend the next input to sample.
 
@@ -123,15 +126,17 @@ class BO_algo:
 
         x = torch.tensor(x).unsqueeze(dim=0)
 
-        k_xA = self.Matern_f(x, self.xs)
-        k_xA_times_Kf_AA_sig2_inv = k_xA @ self.Kf_AA_sig2_inv  
-        μf_pred = self.μf_prior + k_xA_times_Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
-        σf_pred = torch.sqrt(self.Matern_f(x, x) - k_xA_times_Kf_AA_sig2_inv @ k_xA.t())
+        μf_pred, σf_pred = self.get_mu_sigma_f(x)
+        μv_pred, σv_pred = self.get_mu_sigma_v(x)
 
-        return (μf_pred + self.β*σf_pred).item()
+        return (μf_pred - 100*(self.κ + 0.05 - μv_pred).clamp(min=0.) + self.β*(σf_pred + σv_pred)).item()
 
 
     def get_mu_sigma_f(self, xs: torch.tensor, full_cov=False) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Arguments:
+            xs: torch.tensor in [n,1]
+        """
         k_xA = self.Matern_f(xs, self.xs)
         μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
         if not full_cov:
@@ -334,12 +339,21 @@ def plot_agent(agent, ax=None):
             fig, (ax1, ax2) = plt.subplots(1,2)
         xs = torch.linspace(0,5)
         # Plot f
+
+        mus_f, var_f = agent.get_mu_sigma_f(xs.unsqueeze(1), full_cov=True)
+        mus_v, var_v = agent.get_mu_sigma_v(xs.unsqueeze(1), full_cov=True)
+        fs = torch.distributions.MultivariateNormal(mus_f, var_f).sample()
+        vs = torch.distributions.MultivariateNormal(mus_v, var_v).sample()
+
+
         ys = np.array(list(map(f, xs)))
         mus, sigs = agent.get_mu_sigma_f(xs.unsqueeze(1))
         ax1.plot(xs, ys, label="GT")
         ax1.plot(xs, mus, '--', label="Mean")
         ax1.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
         ax1.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
+        #ax1.plot(xs, agent.acquisition_function_thompson(xs), ':', label='acq. fct.thompson')
+        ax1.plot(xs, fs, '--', c='r', label='Thompson sample')
         ax1.scatter(agent.xs, agent.fs, label="Sample points")
         ax1.legend()
         ax1.set_title("f", fontsize=16)
@@ -351,6 +365,8 @@ def plot_agent(agent, ax=None):
         ax2.plot(xs, mus, '--', label="Mean")
         ax2.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
         ax2.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
+        #ax2.plot(xs, vs, '--', c='r', label='Thompson sample')
+        ax2.hlines(agent.κ, xmin=domain[0,0], xmax=domain[0,1])
         ax2.scatter(agent.xs, agent.vs, label="Sample points")
         ax2.legend()
         ax2.set_title("v", fontsize=16)
