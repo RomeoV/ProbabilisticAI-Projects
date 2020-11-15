@@ -226,7 +226,7 @@ class BO_algo:
         """
 
         # TODO: enter your code here
-        return self.xs[self.fs.argmax()]
+        return self.xs[(self.fs - 100*(self.κ + 0.05 - self.vs).clamp(min=0.)).argmax()]
 
 
     @staticmethod
