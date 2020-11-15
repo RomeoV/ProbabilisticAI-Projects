@@ -1,4 +1,3 @@
-import math
 import numpy as np
 import torch
 import os
@@ -115,84 +114,58 @@ class BayesianLayer(torch.nn.Module):
         self.use_bias = bias
 
         # TODO: enter your code here
-        self.prior_mu = 0.0
-        self.prior_sigma = 0.7
-        self.weight_mu = nn.Parameter(torch.zeros(output_dim, input_dim))
-        self.weight_logsigma = nn.Parameter(torch.zeros(output_dim, input_dim))
-        nn.init.normal_(self.weight_mu, self.prior_mu, self.prior_sigma)
-        nn.init.normal_(self.weight_logsigma, self.prior_mu, self.prior_sigma)
+        self.prior_mu = nn.Parameter(torch.tensor([0.]), requires_grad=False)  # this we just guess
+        self.prior_sigma = nn.Parameter(torch.tensor([1.]), requires_grad=False)
+
+        self.weight_mu = nn.Parameter(torch.Tensor(self.input_dim, self.output_dim).normal_(
+            self.prior_mu.item(), self.prior_sigma.item()
+        )
+        self.weight_logsigmasq=nn.Linear(in_features=input_dim, out_features=output_dim, bias=False).normal_(
+            self.prior_mu.item(), self.prior_sigma.item()
+        )
 
         if self.use_bias:
-            self.bias_mu = nn.Parameter(torch.zeros(output_dim))
-            self.bias_logsigma = nn.Parameter(torch.zeros(output_dim))
-            # nn.init.normal_(self.bias_mu, self.prior_mu, self.prior_sigma)
-            # nn.init.normal_(self.bias_logsigma, self.prior_mu, self.prior_sigma)
+            self.bias_mu=nn.Parameter(torch.zeros(output_dim))
+            self.bias_logsigmasq=nn.Parameter(torch.ones(output_dim))
         else:
             self.register_parameter('bias_mu', None)
             self.register_parameter('bias_logsigma', None)
 
     def forward(self, inputs):
+        # inputs will be (n_batch x n_features)
+        # 1) Sample weights
+        # 2) Sample bias
+        # 3) Apply linear layer using these weights
+        weight_distribution=torch.distributions.Normal(
+            self.weight_mu,
+            self.weight_logsigmasq.exp(),
+        )
+        bias_distribution=torch.distributions.Normal(
+            self.bias_mu,
+            self.bias_logsigmasq.exp(),
+        )
 
+        normal=torch.distributions.Normal(0, 1)
 
-<< << << < HEAD
-       # inputs will be (n_batch x n_features)
-       # 1) Sample weights
-       # 2) Sample bias
-       # 3) Apply linear layer using these weights
-   weight_distribution = torch.distributions.Normal(
-        self.weight_mu.weight,
-        self.weight_logsigmasq.weight.exp(),
-    )
-    bias_distribution = torch.distributions.Normal(
-        self.bias_mu,
-        self.bias_logsigmasq.exp(),
-    )
+        if self.use_bias:
+            # TODO: enter your code here
+            eps_W=normal.sample(sample_shape=self.weight_mu.weight.size())
+            eps_b=normal.sample(sample_shape=(self.weight_mu.weight.size()[0],))
+            W=self.weight_logsigmasq.weight.exp().sqrt() * eps_W + self.weight_mu.weight
+            b=self.bias_logsigmasq.exp().sqrt() * eps_b + self.bias_mu
+            y=inputs @ W.t() + b
+        else:
+            bias=None
+            W=weight_distribution.rsample()
+            y=inputs @ W.t()
 
-    normal = torch.distributions.Normal(0, 1)
+        return y
 
-    if self.use_bias:
-           # TODO: enter your code here
-        eps_W = normal.sample(sample_shape=self.weight_mu.weight.size())
-        eps_b = normal.sample(sample_shape=(self.weight_mu.weight.size()[0],))
-        W = self.weight_logsigmasq.weight.exp().sqrt() * eps_W + self.weight_mu.weight
-        b = self.bias_logsigmasq.exp().sqrt() * eps_b + self.bias_mu
-        y = inputs @ W.t() + b
-    else:
-        bias = None
-        W = weight_distribution.rsample()
-        y = inputs @ W.t()
-
-    return y
-== == == =
-   # TODO: enter your code here
-   shrink = 0.1
-
-    weight = torch.distributions.Normal(self.weight_mu, shrink * self.weight_logsigma.exp())
-
-    W = weight.rsample()
-
-    if self.use_bias:
-        # TODO: enter your code here
-        bias = torch.distributions.Normal(self.bias_mu, shrink * self.bias_logsigma.exp())
-
-        b = bias.rsample()
-
-        outputs = inputs @ W.t() + b
-        # outputs = torch.mm(inputs, W.t())
-        # outputs.add_(b)
-    else:
-        bias = None
-        outputs = inputs @ W.t()
-
-    # TODO: enter your code here
-    return outputs
->>>>>> > branch
-
-   def kl_divergence(self):
+    def kl_divergence(self):
         '''
         Computes the KL divergence between the priors and posteriors for this layer.
         '''
-        kl_loss = self._kl_divergence(self.weight_mu.weight, self.weight_logsigmasq.weight)
+        kl_loss=self._kl_divergence(self.weight_mu.weight, self.weight_logsigmasq.weight)
         if self.use_bias:
             kl_loss += self._kl_divergence(self.bias_mu, self.bias_logsigmasq)
         return kl_loss
@@ -203,25 +176,8 @@ class BayesianLayer(torch.nn.Module):
         and the Gaussian prior.
         '''
 
-        d = mu.numel()
+        d=mu.numel()
         # TODO: enter your code here
-        # KL(p||q) for p and q Gaussian distributions with diagonal covariance matrices
-        # p = N(mu_0, sigma_0)
-        # q = N(mu_1, sigma_1) -> prior
-        d = mu.numel()
-        kl = 0.5 * (( logsigma.exp() / self.prior_sigma ).pow(2).sum()
-                   + ((self.prior_mu - mu) / self.prior_sigma ).pow(2).sum()
-                   - d + (2 * d * math.log(self.prior_sigma) - 2 * logsigma.sum() ) )
-
-        # KL(p||q) for p = N([mu_1, ..., mu_d], diag([sigma_1**2, ..., sigma_d**2]))
-        #          and q = N(0, I)
-        # kl2 = 0.5 * (logsigma.exp().pow(2).sum() + mu.pow(2).sum() - d - 2.0 * logsigma.sum())
-
-        # relerr = (kl - kl2).abs() / kl.abs()
-
-        # print(kl, kl2, relerr)
-
-        # assert relerr < 1e-6, f"{kl.item():.4f}, {kl2.item():.4f}"
 
         """ Full gaussian kl-divergence """
         # kl = 1/2 * (1/(self.prior_sigma**2) * logsigmasq.exp().sum()
@@ -231,7 +187,7 @@ class BayesianLayer(torch.nn.Module):
         #             )
 
         """ Reduced gaussian kl-divergence """
-        kl = 1/2 * (logsigmasq.exp().sum() + mu.pow(2).sum() - d - logsigmasq.sum())
+        kl=1/2 * (logsigmasq.exp().sum() + mu.pow(2).sum() - d - logsigmasq.sum())
 
         # breakpoint()
         # print((logsigmasq.abs().min().item(), logsigmasq.abs().max().item()))
@@ -247,36 +203,32 @@ class BayesNet(torch.nn.Module):
 
     def __init__(self, input_size, num_layers, width):
         super().__init__()
-        input_layer = torch.nn.Sequential(BayesianLayer(input_size, width),
+        input_layer=torch.nn.Sequential(BayesianLayer(input_size, width),
                                           nn.ReLU())
-        hidden_layers = [nn.Sequential(BayesianLayer(width, width),
+        hidden_layers=[nn.Sequential(BayesianLayer(width, width),
                                        nn.ReLU()) for _ in range(num_layers)]
-        output_layer = BayesianLayer(width, 10)
-        layers = [input_layer, *hidden_layers, output_layer]
-        self.net = torch.nn.Sequential(*layers)
+        output_layer=BayesianLayer(width, 10)
+        layers=[input_layer, *hidden_layers, output_layer]
+        self.net=torch.nn.Sequential(*layers)
         print(self.net)
 
     def forward(self, x, num_forward_passes=20):
-        batch_size = x.shape[0]
-        results = torch.zeros(num_forward_passes, batch_size, 10)
+        batch_size=x.shape[0]
+        results=torch.zeros(num_forward_passes, batch_size, 10)
         for i in range(num_forward_passes):
-            results[i] = self.net(x)
-        logits = results.mean(0)
+            results[i]=self.net(x)
+        logits=results.mean(0)
         return logits
 
     def predict_class_probs(self, x, num_forward_passes=10):
         assert x.shape[1] == 28**2
-        batch_size = x.shape[0]
+        batch_size=x.shape[0]
 
         # TODO: make n random forward passes
         # compute the categorical softmax probabilities
         # marginalize the probabilities over the n forward passes
-        outputs = torch.zeros(num_forward_passes, batch_size, 10)
-        for i in range(num_forward_passes):
-            outputs[i] = self.forward(x)
-        probs = outputs.softmax(-1).mean(0)
 
-        probs = self.forward(x, num_forward_passes).softmax(-1)
+        probs=self.forward(x, num_forward_passes).softmax(-1)
 
         assert probs.shape == (batch_size, 10)
         assert (probs[0, :].sum() - 1).abs() < 1e-5
@@ -287,19 +239,11 @@ class BayesNet(torch.nn.Module):
         Computes the KL divergence loss for all layers.
         '''
         # TODO: enter your code here
-<<<<<< < HEAD
-   kl_divergences_prior = (sum(
-        l[0].kl_divergence() for l in self.net[:-1])
-        + self.net[-1].kl_divergence())
-== =====
-   kl = self.net[-1].kl_divergence()
-    for layer in self.net[:-1]:
-        kl += layer[0].kl_divergence()
+        kl_divergences_prior=(sum(
+            l[0].kl_divergence() for l in self.net[:-1])
+            + self.net[-1].kl_divergence())
 
-    return kl
->>>>>> > branch
-
-   return kl_divergences_prior
+        return kl_divergences_prior
 
 
 def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_interval=100):
@@ -311,32 +255,28 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
     iterations.
     '''
 
-    criterion = torch.nn.CrossEntropyLoss()  # always used in this assignment
+    criterion=torch.nn.CrossEntropyLoss()  # always used in this assignment
 
-    pbar = trange(num_epochs)
+    pbar=trange(num_epochs)
     for i in pbar:
         for k, (batch_x, batch_y) in enumerate(train_loader):
             model.zero_grad()
-            y_pred = model(batch_x)
-            loss = criterion(y_pred, batch_y)
+            y_pred=model(batch_x)
+            loss=criterion(y_pred, batch_y)
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
-<<<<<< < HEAD
-   loss += model.kl_loss().squeeze()
-    if i %10 == 0 and k == 0:
-        print(f"Loss: {criterion(y_pred, batch_y):.3f}, {model.kl_loss().squeeze():.3f}")
-== =====
-   loss += model.kl_loss() / len(train_loader)
->>>>>> > branch
-   loss.backward()
-    optimizer.step()
+                loss += model.kl_loss().squeeze()
+                if i % 10 == 0 and k == 0:
+                    print(f"Loss: {criterion(y_pred, batch_y):.3f}, {model.kl_loss().squeeze():.3f}")
+            loss.backward()
+            optimizer.step()
 
-    if k % pbar_update_interval == 0:
-        acc = (model(batch_x).argmax(axis=1) == batch_y).sum().float()/(len(batch_y))
-        pbar.set_postfix(loss=loss.item(), acc=acc.item())
-    if i == 50:
-        breakpoint()
+            if k % pbar_update_interval == 0:
+                acc=(model(batch_x).argmax(axis=1) == batch_y).sum().float()/(len(batch_y))
+                pbar.set_postfix(loss=loss.item(), acc=acc.item())
+            if i == 50:
+                breakpoint()
 
 
 def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, private_test):
@@ -348,79 +288,79 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
     as well as the classification performance for OOD detection based
     on the predictive confidences.
     '''
-    accs_test = []
-    probs = torch.tensor([])
-    labels = torch.tensor([]).long()
+    accs_test=[]
+    probs=torch.tensor([])
+    labels=torch.tensor([]).long()
     for batch_x, batch_y in test_loader:
-        pred = model.predict_class_probs(batch_x)
-        probs = torch.cat((probs, pred))
-        labels = torch.cat((labels, batch_y))
-        acc = (pred.argmax(axis=1) == batch_y).sum().float().item()/(len(batch_y))
+        pred=model.predict_class_probs(batch_x)
+        probs=torch.cat((probs, pred))
+        labels=torch.cat((labels, batch_y))
+        acc=(pred.argmax(axis=1) == batch_y).sum().float().item()/(len(batch_y))
         accs_test.append(acc)
 
     if not private_test:
-        acc_mean = np.mean(accs_test)
-        ece_mean = ece(probs.detach().numpy(), labels.numpy())
+        acc_mean=np.mean(accs_test)
+        ece_mean=ece(probs.detach().numpy(), labels.numpy())
         print(f"Model type: {model_type}\nAccuracy = {acc_mean:.3f}\nECE = {ece_mean:.3f}")
     else:
         print("Using private test set.")
 
-    final_probs = probs.detach().numpy()
+    final_probs=probs.detach().numpy()
 
     if extended_eval:
-        confidences = []
+        confidences=[]
         for batch_x, batch_y in test_loader:
-            pred = model.predict_class_probs(batch_x)
-            confs, _ = pred.max(dim=1)
+            pred=model.predict_class_probs(batch_x)
+            confs, _=pred.max(dim=1)
             confidences.extend(confs.detach().numpy())
 
-        confidences = np.array(confidences)
+        confidences=np.array(confidences)
 
-        fig, axs = plt.subplots(ncols=10, figsize=(20, 2))
+        fig, axs=plt.subplots(ncols=10, figsize=(20, 2))
         for ax, idx in zip(axs, confidences.argsort()[-10:]):
             ax.imshow(test_loader.dataset.tensors[0][idx].numpy().reshape((28, 28)), cmap="gray")
             ax.axis("off")
         fig.suptitle("Most confident predictions", size=20)
         fig.savefig(f"mnist_most_confident_{model_type}.pdf")
 
-        fig, axs = plt.subplots(ncols=10, figsize=(20, 2))
+        fig, axs=plt.subplots(ncols=10, figsize=(20, 2))
         for ax, idx in zip(axs, confidences.argsort()[:10]):
             ax.imshow(test_loader.dataset.tensors[0][idx].numpy().reshape((28, 28)), cmap="gray")
             ax.axis("off")
         fig.suptitle("Least confident predictions", size=20)
         fig.savefig(f"mnist_least_confident_{model_type}.pdf")
 
-        fmnist_path = "/data/fashion/fmnist.npz"
+        fmnist_path="/data/fashion/fmnist.npz"
         if not os.path.isfile(fmnist_path):
-            fmnist_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/fashion/fmnist.npz")
-        data_fmnist = np.load(fmnist_path)["x_test"]
-        dataset_fmnist = torch.utils.data.TensorDataset(torch.tensor(data_fmnist))
-        dataloader_fmnist = torch.utils.data.DataLoader(dataset_fmnist, batch_size=batch_size)
+            fmnist_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/fashion/fmnist.npz")
+        data_fmnist=np.load(fmnist_path)["x_test"]
+        dataset_fmnist=torch.utils.data.TensorDataset(torch.tensor(data_fmnist))
+        dataloader_fmnist=torch.utils.data.DataLoader(dataset_fmnist, batch_size=batch_size)
 
-        confidences_fmnist = []
+        confidences_fmnist=[]
         for batch_x in dataloader_fmnist:
-            pred = model.predict_class_probs(batch_x[0])
-            confs, _ = pred.max(dim=1)
+            pred=model.predict_class_probs(batch_x[0])
+            confs, _=pred.max(dim=1)
             confidences_fmnist.extend(confs.detach().numpy())
 
-        confidences_fmnist = np.array(confidences_fmnist)
+        confidences_fmnist=np.array(confidences_fmnist)
 
-        fig, axs = plt.subplots(ncols=10, figsize=(20, 2))
+        fig, axs=plt.subplots(ncols=10, figsize=(20, 2))
         for ax, idx in zip(axs, confidences_fmnist.argsort()[-10:]):
             ax.imshow(dataloader_fmnist.dataset.tensors[0][idx].numpy().reshape((28, 28)), cmap="gray")
             ax.axis("off")
         fig.suptitle("Most confident predictions", size=20)
         fig.savefig(f"fashionmnist_most_confident_{model_type}.pdf")
 
-        fig, axs = plt.subplots(ncols=10, figsize=(20, 2))
+        fig, axs=plt.subplots(ncols=10, figsize=(20, 2))
         for ax, idx in zip(axs, confidences_fmnist.argsort()[:10]):
             ax.imshow(dataloader_fmnist.dataset.tensors[0][idx].numpy().reshape((28, 28)), cmap="gray")
             ax.axis("off")
         fig.suptitle("Least confident predictions", size=20)
         fig.savefig(f"fashionmnist_least_confident_{model_type}.pdf")
 
-        confidences_all = np.concatenate([confidences, confidences_fmnist])
-        dataset_labels = np.concatenate([np.ones_like(confidences), np.zeros_like(confidences_fmnist)])
+        confidences_all=np.concatenate([confidences, confidences_fmnist])
+        dataset_labels=np.concatenate([np.ones_like(confidences), np.zeros_like(confidences_fmnist)])
 
         print(f"AUROC for MNIST vs. FashionMNIST OOD detection based on {model_type} confidence: "
               f"{roc_auc_score(dataset_labels, confidences_all):.3f}")
@@ -431,36 +371,36 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
 
 
 def main(test_loader=None, private_test=False):
-    num_epochs = 100  # You might want to adjust this
-    batch_size = 128  # Try playing around with this
-    print_interval = 100
-    learning_rate = 1e-3  # Try playing around with this
-    model_type = "bayesnet"  # Try changing this to "densenet" as a comparison
-    extended_evaluation = False  # Set this to True for additional model evaluation
+    num_epochs=100  # You might want to adjust this
+    batch_size=128  # Try playing around with this
+    print_interval=100
+    learning_rate=1e-3  # Try playing around with this
+    model_type="bayesnet"  # Try changing this to "densenet" as a comparison
+    extended_evaluation=False  # Set this to True for additional model evaluation
 
-    dataset_train = load_rotated_mnist()
-    train_loader = torch.utils.data.DataLoader(dataset_train, batch_size=batch_size,
+    dataset_train=load_rotated_mnist()
+    train_loader=torch.utils.data.DataLoader(dataset_train, batch_size=batch_size,
                                                shuffle=True, drop_last=True)
 
     if model_type == "bayesnet":
-        model = BayesNet(input_size=784, num_layers=2, width=100)
+        model=BayesNet(input_size=784, num_layers=2, width=100)
     elif model_type == "densenet":
-        model = Densenet(input_size=784, num_layers=2, width=100)
+        model=Densenet(input_size=784, num_layers=2, width=100)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer=torch.optim.Adam(model.parameters(), lr=learning_rate)
     train_network(model, optimizer, train_loader,
                   num_epochs=num_epochs, pbar_update_interval=print_interval)
 
     if test_loader is None:
         print("evaluating on train data")
-        test_loader = train_loader
+        test_loader=train_loader
     else:
         print("evaluating on test data")
 
     # Do not change this! The main() method should return the predictions for the test loader
-    predictions = evaluate_model(model, model_type, test_loader, batch_size, extended_evaluation, private_test)
+    predictions=evaluate_model(model, model_type, test_loader, batch_size, extended_evaluation, private_test)
     return predictions
 
 
-if __name__ =="__main__":
+if __name__ == "__main__":
     main()
