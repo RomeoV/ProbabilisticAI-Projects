@@ -28,7 +28,7 @@ class BO_algo:
         self.Matern_v = lambda x, y: self.var_v * torch.from_numpy(self.Matern_v_np(x, y))
         self.μv_prior = 1.5
         self.var_v = sqrt(2)
-        self.σ_v = 0.1001  # TODO: Change this back
+        self.σ_v = 0.0101  # TODO: Change this back
 
         self.κ = 1.2  # v_min
         self.β = 2.
@@ -291,8 +291,8 @@ def train_agent(agent, n_iters=20, debug=False):
     # Loop until budget is exhausted
     for j in range(n_iters):
         # Get next recommendation
-        #x = agent.next_recommendation()
-        x = agent.next_recommendation_thompson()
+        x = agent.next_recommendation()
+        #x = agent.next_recommendation_thompson()
 
         # Check for valid shape
         assert x.shape == (1, domain.shape[0]), \
