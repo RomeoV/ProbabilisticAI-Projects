@@ -133,8 +133,6 @@ class BayesianLayer(torch.nn.Module):
 
     def forward(self, inputs):
 
-
-<< << << < HEAD
        # inputs will be (n_batch x n_features)
        # 1) Sample weights
        # 2) Sample bias
@@ -163,30 +161,6 @@ class BayesianLayer(torch.nn.Module):
         y = inputs @ W.t()
 
     return y
-== == == =
-   # TODO: enter your code here
-   shrink = 0.1
-
-    weight = torch.distributions.Normal(self.weight_mu, shrink * self.weight_logsigma.exp())
-
-    W = weight.rsample()
-
-    if self.use_bias:
-        # TODO: enter your code here
-        bias = torch.distributions.Normal(self.bias_mu, shrink * self.bias_logsigma.exp())
-
-        b = bias.rsample()
-
-        outputs = inputs @ W.t() + b
-        # outputs = torch.mm(inputs, W.t())
-        # outputs.add_(b)
-    else:
-        bias = None
-        outputs = inputs @ W.t()
-
-    # TODO: enter your code here
-    return outputs
->>>>>> > branch
 
    def kl_divergence(self):
         '''
@@ -287,17 +261,9 @@ class BayesNet(torch.nn.Module):
         Computes the KL divergence loss for all layers.
         '''
         # TODO: enter your code here
-<<<<<< < HEAD
    kl_divergences_prior = (sum(
         l[0].kl_divergence() for l in self.net[:-1])
         + self.net[-1].kl_divergence())
-== =====
-   kl = self.net[-1].kl_divergence()
-    for layer in self.net[:-1]:
-        kl += layer[0].kl_divergence()
-
-    return kl
->>>>>> > branch
 
    return kl_divergences_prior
 
@@ -322,13 +288,9 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             if type(model) == BayesNet:
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
-<<<<<< < HEAD
    loss += model.kl_loss().squeeze()
     if i %10 == 0 and k == 0:
         print(f"Loss: {criterion(y_pred, batch_y):.3f}, {model.kl_loss().squeeze():.3f}")
-== =====
-   loss += model.kl_loss() / len(train_loader)
->>>>>> > branch
    loss.backward()
     optimizer.step()
 
