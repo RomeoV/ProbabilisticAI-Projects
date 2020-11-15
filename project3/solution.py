@@ -299,14 +299,9 @@ def f(x):
 def v(x):
     """Dummy speed"""
 
-
-<< << << < HEAD
-    return domain[:, 0] + np.random.rand(domain.shape[0]) * (domain[:, 1] - domain[:, 0])
-
-== == == =
+    # return domain[:, 0] + np.random.rand(domain.shape[0]) * (domain[:, 1] - domain[:, 0])
     return np.cos(x).squeeze()
     # return 2.0
->>>>>> > f0434367637c27dfd4b4393fa13f5fca557aa9be
 
 
 def train_agent(agent, n_iters=20, debug=False):
@@ -360,21 +355,14 @@ def plot_agent(agent, ax=None):
         import matplotlib.pyplot as plt
         if ax == None:
 
-
-<< << << < HEAD
-            fig, ax = plt.subplots()
+        fig, (ax1, ax2) = plt.subplots(1, 2)
         xs = torch.linspace(0, 5)
-=======
-            fig, (ax1, ax2) = plt.subplots(1,2)
-        xs = torch.linspace(0,5)
         # Plot f
 
         mus_f, var_f = agent.get_mu_sigma_f(xs.unsqueeze(1), full_cov=True)
         mus_v, var_v = agent.get_mu_sigma_v(xs.unsqueeze(1), full_cov=True)
         fs = torch.distributions.MultivariateNormal(mus_f, var_f).sample()
         vs = torch.distributions.MultivariateNormal(mus_v, var_v).sample()
-
->>>>>>> f0434367637c27dfd4b4393fa13f5fca557aa9be
 
         ys = np.array(list(map(f, xs)))
         mus, sigs = agent.get_mu_sigma_f(xs.unsqueeze(1))
@@ -396,7 +384,7 @@ def plot_agent(agent, ax=None):
         ax2.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
         ax2.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
         # ax2.plot(xs, vs, '--', c='r', label='Thompson sample')
-        ax2.hlines(agent.κ, xmin=domain[0,0], xmax=domain[0,1])
+        ax2.hlines(agent.κ, xmin=domain[0, 0], xmax=domain[0, 1])
         ax2.scatter(agent.xs, agent.vs, label="Sample points")
         ax2.legend()
         ax2.set_title("v", fontsize=16)
