@@ -103,19 +103,18 @@ class BO_algo:
         """
 
         x = torch.tensor(x).unsqueeze(dim=0)
-
-        Ɛ = 0.5
-
+        Ɛ = 0.9
         β = 1.
+        β2 = 1.
+
         k_xAf = self.Matern_f(x, self.xs)
         μf_pred = self.μf_prior + k_xAf @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
         σf_pred = torch.sqrt(self.Matern_f(x, x) - k_xAf @ self.Kf_AA_sig2_inv @ k_xAf.t())
 
-        β2 = 1.
         k_xAv = self.Matern_v(x, self.xs)
         μv_pred = 1.5
         σv_pred = torch.sqrt(self.Matern_v(x, x) - k_xAv @ self.Kv_AA_sig2_inv @ k_xAv.t())
-        if(2*σv_pred > μv_pred-1.2):
+        if(μv_pred-σv_pred <= self.κ):
             return Ɛ*(μf_pred + β*σf_pred).item()+(1-Ɛ)*(μv_pred + β2*σv_pred).item()
         else:
             return (μf_pred + β*σf_pred).item()
@@ -168,9 +167,6 @@ class BO_algo:
         self.fs = torch.cat((self.fs, f), dim=0)
         self.vs = torch.cat((self.vs, v), dim=0)
 
-
-<< << << < HEAD
-== == == =
         Mf = self.Matern_f(self.xs, self.xs) + self.σ_f**2 * torch.eye(self.xs.shape[0])
         Mv = self.Matern_v(self.xs, self.xs) + self.σ_v**2 * torch.eye(self.xs.shape[0])
         n = Mf.shape[0]
@@ -181,8 +177,6 @@ class BO_algo:
             self.Kf_AA_sig2_inv = Mf_inv
             self.Kv_AA_sig2_inv = Mv_inv
 
-
->>>>>> > f204968cc6c69c271d7ed05a9034139ed690c54b
     def get_solution(self):
         """
         Return x_opt that is believed to be the maximizer of f.
@@ -194,7 +188,12 @@ class BO_algo:
         """
 
         # TODO: enter your code here
-        return self.xs[self.fs.argmax()]
+        candidates = self.xs[self.vs > self.κ]
+        indices = np.where(candidates)[0]
+        assert candidates.numel() > 0,\
+            "No candidates satisfies speed constraint"
+
+        return candidates[self.fs[indices].argmax()]
 
     @ staticmethod
     def _get_blockwise_inverse(A_inv, B, C, D):
@@ -252,21 +251,12 @@ def f(x):
 
 def v(x):
     """Dummy speed"""
-    return 2.0
+    return domain[:, 0] + np.random.rand(domain.shape[0]) * (domain[:, 1] - domain[:, 0])
 
 
-<< << << < HEAD
-
-
-def train_agent(agent, n_iters=20):
-
-
-== == == =
 def train_agent(agent, n_iters=20, debug=False):
 
-
->>>>>> > f204968cc6c69c271d7ed05a9034139ed690c54b
-    # Loop until budget is exhausted
+   # Loop until budget is exhausted
     for j in range(n_iters):
         # Get next recommendation
         x = agent.next_recommendation()
@@ -304,18 +294,6 @@ def train_agent(agent, n_iters=20, debug=False):
     print(f'Optimal value: 0\nProposed solution {solution}\nSolution value '
           f'{f(solution)}\nRegret{regret}')
 
-<< << << < HEAD
-
-
-def plot_agent(agent):
-    try:
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-        xs = torch.linspace(0, 5)
-
-
-== == == =
-
 
 def plot_agent(agent, ax=None):
     try:
@@ -324,8 +302,6 @@ def plot_agent(agent, ax=None):
             fig, ax = plt.subplots()
         xs = torch.linspace(0, 5)
 
-
->>>>>> > f204968cc6c69c271d7ed05a9034139ed690c54b
         ys = np.array(list(map(f, xs)))
         mus, sigs = agent.get_mu_sigma(xs.unsqueeze(1))
         ax.plot(xs, ys, label="GT")
