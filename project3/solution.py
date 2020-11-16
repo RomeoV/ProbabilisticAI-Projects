@@ -32,7 +32,7 @@ class BO_algo:
         # GP parameters for v
         self.Matern_v_np = Matern(length_scale=0.5, nu=2.5)
         self.Matern_v = lambda x, y: self.var_v * torch.from_numpy(self.Matern_v_np(x, y))
-        self.μv_prior = 1.2  # TODO: This really helps, putting it to a value closer to the constraint
+        self.μv_prior = 1.3  # TODO: This really helps, putting it to a value closer to the constraint
         self.var_v = sqrt(2)
         self.σ_v = 0.0051  # TODO: Matrix inversion super unstable if this is too small.
 
