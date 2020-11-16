@@ -32,7 +32,7 @@ class BO_algo:
         # GP parameters for v
         self.Matern_v_np = Matern(length_scale=0.5, nu=2.5)
         self.Matern_v = lambda x, y: self.var_v * torch.from_numpy(self.Matern_v_np(x, y))
-        self.μv_prior = 1.3  # TODO: This really helps, putting it to a value closer to the constraint
+        self.μv_prior = 1.2  # TODO: This really helps, putting it to a value closer to the constraint
         self.var_v = sqrt(2)
         self.σ_v = 0.0051  # TODO: Matrix inversion super unstable if this is too small.
 
@@ -386,7 +386,7 @@ def plot_agent(agent, ax=None):
         ax1.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
         ax1.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
         ax1.scatter(agent.xs, agent.fs, label="Sample points")
-        ax1.vlines(x_best, ymin=agent.kappa-0.3, ymax=agent.kappa+0.3, colors='r')
+        ax1.vlines(x_best, ymin=agent.κ-0.3, ymax=agent.κ+0.3, colors='r')
         ax1.legend()
         ax1.set_title("f", fontsize=16)
 
@@ -398,7 +398,7 @@ def plot_agent(agent, ax=None):
         ax2.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
         ax2.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
         ax2.hlines(agent.κ, xmin=domain[0,0], xmax=domain[0,1])
-        ax2.vlines(x_best, ymin=kappa-0.3, ymax=kappa+0.3, colors='r')
+        ax2.vlines(x_best, ymin=agent.κ-0.3, ymax=agent.κ+0.3, colors='r')
         ax2.scatter(agent.xs, agent.vs, label="Sample points")
         ax2.legend()
         ax2.set_title("v", fontsize=16)
@@ -407,7 +407,7 @@ def plot_agent(agent, ax=None):
 
 def main():
     # Init problem
-    agent = BO_algo()
+    agent = BO_algo(on_docker=False)
     train_agent(agent, debug=True)
     plot_agent(agent)
 
