@@ -13,8 +13,14 @@ domain_t = torch.tensor(domain)
 
 
 class BO_algo:
-    def __init__(self):
+    def __init__(self, on_docker=True):
         """Initializes the algorithm with a parameter configuration. """
+        self.fast_matrix_inverse = True
+        self.on_docker = on_docker
+
+        self.κ = 1.2  # v_min
+        self.β = 1.
+
 
         # GP parameters for f
         self.Matern_f_np = Matern(length_scale=0.5, nu=2.5)
@@ -26,12 +32,9 @@ class BO_algo:
         # GP parameters for v
         self.Matern_v_np = Matern(length_scale=0.5, nu=2.5)
         self.Matern_v = lambda x, y: self.var_v * torch.from_numpy(self.Matern_v_np(x, y))
-        self.μv_prior = 1.5
+        self.μv_prior = 1.3  # TODO: This really helps, putting it to a value closer to the constraint
         self.var_v = sqrt(2)
-        self.σ_v = 0.0101  # TODO: Change this back
-
-        self.κ = 1.2  # v_min
-        self.β = 2.
+        self.σ_v = 0.0051  # TODO: Matrix inversion super unstable if this is too small.
 
         self.xs = torch.zeros(0,domain_t.shape[0]).double()
         self.fs = torch.zeros(0).double()
@@ -39,7 +42,6 @@ class BO_algo:
 
         self.Kf_AA_sig2_inv = torch.zeros(0,0).double()
         self.Kv_AA_sig2_inv = torch.zeros(0,0).double()
-
 
     def next_recommendation(self):
         return self.next_recommendation_UCB()
@@ -57,11 +59,11 @@ class BO_algo:
         # TODO: enter your code here
         # In implementing this function, you may use optimize_acquisition_function() defined below.
         if (self.Kf_AA_sig2_inv.numel() == 0):
-            retval = torch.tensor(domain).double().mean().unsqueeze(0).numpy()
-            retval = 1.0  # TODO change this
+            retval = 3.0  # Algo should be robust for any choice of initial sample
         else:
             retval = self.optimize_acquisition_function()
         return np.atleast_2d(retval)
+
 
     def next_recommendation_thompson(self):
         if self.xs.shape[0] > 3:
@@ -73,7 +75,7 @@ class BO_algo:
             mus_v, var_v = self.get_mu_sigma_v(xs, full_cov=True)
             vs = torch.distributions.MultivariateNormal(mus_v, var_v).sample()
 
-            obj = fs - (self.κ + 0.05 - vs).clamp(min=0.)
+            obj = fs - 1*(self.κ + 0.01 - vs).clamp(min=0.)
             argmax = obj.argmax()
             return np.atleast_2d(xs[argmax].numpy())
         else:
@@ -101,7 +103,7 @@ class BO_algo:
             x0 = domain[:, 0] + (domain[:, 1] - domain[:, 0]) * \
                  np.random.rand(domain.shape[0])
             result = fmin_l_bfgs_b(objective, x0=x0, bounds=domain,
-                                   approx_grad=True, factr=1e13)
+                                   approx_grad=True, factr=1e10)  # factr=1e10 => only optimize to 1e10*1e-16=1e-6 accuracy (for speed)
             x_values.append(np.clip(result[0], *domain[0]))
             f_values.append(-result[1])
 
@@ -129,7 +131,7 @@ class BO_algo:
         μf_pred, σf_pred = self.get_mu_sigma_f(x)
         μv_pred, σv_pred = self.get_mu_sigma_v(x)
 
-        return (μf_pred - 100*(self.κ + 0.05 - μv_pred).clamp(min=0.) + self.β*(σf_pred + σv_pred)).item()
+        return (μf_pred - 10*(self.κ - μv_pred).clamp(min=0.) + self.β*(σf_pred + σv_pred)).item()  # TODO: Randonly chose 10 as penalty factor
 
 
     def get_mu_sigma_f(self, xs: torch.tensor, full_cov=False) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -138,24 +140,44 @@ class BO_algo:
             xs: torch.tensor in [n,1]
         """
         k_xA = self.Matern_f(xs, self.xs)
-        μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
-        if not full_cov:
-            σf_pred = torch.sqrt(self.Matern_f(xs, xs).diagonal() - (k_xA @ self.Kf_AA_sig2_inv @ k_xA.t()).diagonal())
-            return μf_pred, σf_pred
+        if self.fast_matrix_inverse:
+            μf_pred = self.μf_prior + k_xA @ self.Kf_AA_sig2_inv @ (self.fs - self.μf_prior)
+            if not full_cov:
+                σf_pred = torch.sqrt(self.Matern_f(xs, xs).diagonal() - (k_xA @ self.Kf_AA_sig2_inv @ k_xA.t()).diagonal())
+                return μf_pred, σf_pred
+            else:
+                Σf_pred = self.Matern_f(xs, xs) - (k_xA @ self.Kf_AA_sig2_inv @ k_xA.t())
+                return μf_pred, Σf_pred
         else:
-            Σf_pred = self.Matern_f(xs, xs) - (k_xA @ self.Kf_AA_sig2_inv @ k_xA.t())
-            return μf_pred, Σf_pred
+            Mf = self.Matern_f(self.xs, self.xs) + self.σ_f**2 * torch.eye(self.xs.shape[0])
+            μf_pred = self.μf_prior + k_xA @ (self.fs - self.μf_prior).solve(Mf)[0]
+            if not full_cov:
+                σf_pred = torch.sqrt(self.Matern_f(xs, xs).diagonal() - (k_xA @ k_xA.t().solve(Mf)[0]).diagonal())
+                return μf_pred, σf_pred
+            else:
+                Σf_pred = self.Matern_f(xs, xs) - (k_xA @ k_xA.t().solve(Mf)[0])
+                return μf_pred, Σf_pred
 
 
     def get_mu_sigma_v(self, xs: torch.tensor, full_cov=False) -> Tuple[torch.Tensor, torch.Tensor]:
         k_xA = self.Matern_v(xs, self.xs)
-        μv_pred = self.μv_prior + k_xA @ self.Kv_AA_sig2_inv @ (self.vs - self.μv_prior)
-        if not full_cov:
-            σv_pred = torch.sqrt(self.Matern_v(xs, xs).diagonal() - (k_xA @ self.Kv_AA_sig2_inv @ k_xA.t()).diagonal())
-            return μv_pred, σv_pred
+        if self.fast_matrix_inverse:
+            μv_pred = self.μv_prior + k_xA @ self.Kv_AA_sig2_inv @ (self.vs - self.μv_prior)
+            if not full_cov:
+                σv_pred = torch.sqrt(self.Matern_v(xs, xs).diagonal() - (k_xA @ self.Kv_AA_sig2_inv @ k_xA.t()).diagonal())
+                return μv_pred, σv_pred
+            else:
+                Σv_pred = self.Matern_v(xs, xs) - (k_xA @ self.Kv_AA_sig2_inv @ k_xA.t())
+                return μv_pred, Σv_pred
         else:
-            Σv_pred = self.Matern_v(xs, xs) - (k_xA @ self.Kv_AA_sig2_inv @ k_xA.t())
-            return μv_pred, Σv_pred
+            Mv = self.Matern_v(self.xs, self.xs) + self.σ_v**2 * torch.eye(self.xs.shape[0])
+            μv_pred = self.μv_prior + k_xA @ (self.vs - self.μv_prior).solve(Mv)[0]
+            if not full_cov:
+                σv_pred = torch.sqrt(self.Matern_v(xs, xs).diagonal() - (k_xA @ k_xA.t().solve(Mv)[0]).diagonal())
+                return μv_pred, σv_pred
+            else:
+                Σv_pred = self.Matern_v(xs, xs) - (k_xA @ k_xA.t().solve(Mv)[0])
+                return μv_pred, Σv_pred
 
 
     def add_data_point(self, x, f, v):
@@ -185,7 +207,8 @@ class BO_algo:
         Cf = Bf.t()
         Df = self.Matern_f(x, x) + self.σ_f**2
 
-        Mf_inv = self._get_blockwise_inverse(Af_inv, Bf, Cf, Df)
+        if self.fast_matrix_inverse:
+            Mf_inv = self._get_blockwise_inverse(Af_inv, Bf, Cf, Df)
 
 
         # Then for v
@@ -194,10 +217,15 @@ class BO_algo:
         Cv = Bv.t()
         Dv = self.Matern_v(x, x) + self.σ_v**2
 
-        Mv_inv = self._get_blockwise_inverse(Av_inv, Bv, Cv, Dv)
+        if self.fast_matrix_inverse:
+            Mv_inv = self._get_blockwise_inverse(Av_inv, Bv, Cv, Dv)
             
         # Append new values to data buffer
         self.xs = torch.cat((self.xs, x), dim=0)
+        if not self.fast_matrix_inverse:
+            Mf_inv = (self.Matern_f(self.xs, self.xs) + self.σ_f**2 * torch.eye(self.xs.shape[0])).inverse()
+            Mv_inv = (self.Matern_v(self.xs, self.xs) + self.σ_v**2 * torch.eye(self.xs.shape[0])).inverse()
+            
         self.fs = torch.cat((self.fs, f), dim=0)
         self.vs = torch.cat((self.vs, v), dim=0)
 
@@ -205,7 +233,7 @@ class BO_algo:
         Mv = self.Matern_v(self.xs, self.xs) + self.σ_v**2 * torch.eye(self.xs.shape[0])
         n = Mf.shape[0]
         if n >= 1:
-            for i in range(2):
+            for i in range(2):  # Do n+1 iterations of stabilization total. One seems to help a lot, the further ones not too much.
                 Mf_inv = Mf_inv @ (torch.eye(n) + (torch.eye(n) - Mf @ Mf_inv))
                 Mv_inv = Mv_inv @ (torch.eye(n) + (torch.eye(n) - Mv @ Mv_inv))
             self.Kf_AA_sig2_inv = Mf_inv @ (torch.eye(n) + (torch.eye(n) - Mf @ Mf_inv))
@@ -226,7 +254,17 @@ class BO_algo:
         """
 
         # TODO: enter your code here
-        return self.xs[(self.fs - 100*(self.κ + 0.05 - self.vs).clamp(min=0.)).argmax()]
+        xs = torch.linspace(domain[0,0], domain[0,1], steps=200).unsqueeze(1)
+        mu_f, sig_f = self.get_mu_sigma_f(xs)
+        mu_v, sig_v = self.get_mu_sigma_v(xs)
+        if self.on_docker:  # I can't figure out why on docker we get a [200x200] valid_ind matrix, but locally only the (correct) [200] valid_ind vector.
+            valid_ind = (mu_v - 1*sig_v).diagonal() > self.κ  # this diagonal is very mysterious
+        else:
+            valid_ind = (mu_v - 1*sig_v) > self.κ
+        x_valid = xs[valid_ind]
+        x_best = x_valid[mu_f[valid_ind].argmax()].squeeze()
+        return x_best
+        #return self.xs[(self.fs - 10*(self.κ - self.vs).clamp(min=0.)).argmax()]
 
 
     @staticmethod
@@ -284,7 +322,7 @@ def f(x):
 
 def v(x):
     """Dummy speed"""
-    return np.cos(x).squeeze()
+    return (x*np.cos(x)).squeeze()
     #return 2.0
 
 def train_agent(agent, n_iters=20, debug=False):
@@ -338,23 +376,17 @@ def plot_agent(agent, ax=None):
         if ax == None:
             fig, (ax1, ax2) = plt.subplots(1,2)
         xs = torch.linspace(0,5)
+        x_best = agent.get_solution()
+
         # Plot f
-
-        mus_f, var_f = agent.get_mu_sigma_f(xs.unsqueeze(1), full_cov=True)
-        mus_v, var_v = agent.get_mu_sigma_v(xs.unsqueeze(1), full_cov=True)
-        fs = torch.distributions.MultivariateNormal(mus_f, var_f).sample()
-        vs = torch.distributions.MultivariateNormal(mus_v, var_v).sample()
-
-
         ys = np.array(list(map(f, xs)))
         mus, sigs = agent.get_mu_sigma_f(xs.unsqueeze(1))
         ax1.plot(xs, ys, label="GT")
         ax1.plot(xs, mus, '--', label="Mean")
         ax1.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
         ax1.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
-        #ax1.plot(xs, agent.acquisition_function_thompson(xs), ':', label='acq. fct.thompson')
-        ax1.plot(xs, fs, '--', c='r', label='Thompson sample')
         ax1.scatter(agent.xs, agent.fs, label="Sample points")
+        ax1.vlines(x_best, ymin=agent.kappa-0.3, ymax=agent.kappa+0.3, colors='r')
         ax1.legend()
         ax1.set_title("f", fontsize=16)
 
@@ -365,8 +397,8 @@ def plot_agent(agent, ax=None):
         ax2.plot(xs, mus, '--', label="Mean")
         ax2.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
         ax2.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
-        #ax2.plot(xs, vs, '--', c='r', label='Thompson sample')
         ax2.hlines(agent.κ, xmin=domain[0,0], xmax=domain[0,1])
+        ax2.vlines(x_best, ymin=kappa-0.3, ymax=kappa+0.3, colors='r')
         ax2.scatter(agent.xs, agent.vs, label="Sample points")
         ax2.legend()
         ax2.set_title("v", fontsize=16)
