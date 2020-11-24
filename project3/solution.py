@@ -1,5 +1,9 @@
+import torch
+import math
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
+from sklearn.gaussian_process.kernels import Matern
+from GP import GP
 
 domain = np.array([[0, 5]])
 
@@ -11,8 +15,20 @@ class BO_algo():
     def __init__(self):
         """Initializes the algorithm with a parameter configuration. """
 
-        # TODO: enter your code here
-        pass
+        din = domain.shape[0] # input dimensionality
+
+        # GP for f (accuracy)
+        k_f = Matern(length_scale=0.5, nu=2.5)
+        self.GP_f = GP(0.0, 0.15, lambda x, y: 0.5 * torch.from_numpy(k_f(x, y)), din)
+
+        # GP for v (speed)
+        k_v = Matern(length_scale=0.5, nu=2.5)
+        self.GP_v = GP(1.5, 1e-4, lambda x, y: math.sqrt(2.0) * torch.from_numpy(k_v(x, y)), din)
+
+        self.kappa = 1.2 # minimum tolerated speed
+        self.beta = 1.0 # used for mu + beta*sigma in acquisition function
+        self.gamma = 10.0 # controlling constraint strength in acquisition function
+        self.x_init = domain[:, 0] + (domain[:, 1] - domain[:, 0]) / 2.0 # initial point
 
 
     def next_recommendation(self):
@@ -25,9 +41,11 @@ class BO_algo():
             1 x domain.shape[0] array containing the next point to evaluate
         """
 
-        # TODO: enter your code here
-        # In implementing this function, you may use optimize_acquisition_function() defined below.
-        raise NotImplementedError
+        if self.GP_f.num_points == 0:
+            x = np.atleast_2d(self.x_init)
+        else:
+            x = self.optimize_acquisition_function()
+        return x
 
 
     def optimize_acquisition_function(self):
@@ -73,8 +91,10 @@ class BO_algo():
             Value of the acquisition function at x
         """
 
-        # TODO: enter your code here
-        raise NotImplementedError
+        mu_f, sigma_f = self.GP_f.predict(x)
+        mu_v, sigma_v = self.GP_v.predict(x)
+
+        return (mu_f - self.gamma*(self.kappa - mu_v).clamp(min=0.) + self.beta*(sigma_f + sigma_v)).item()
 
 
     def add_data_point(self, x, f, v):
@@ -91,8 +111,9 @@ class BO_algo():
             Model training speed
         """
 
-        # TODO: enter your code here
-        raise NotImplementedError
+        self.GP_f.add_point_and_update_kernel_inverse(x, f)
+        self.GP_v.add_point_and_update_kernel_inverse(x, v)
+
 
     def get_solution(self):
         """
@@ -104,8 +125,13 @@ class BO_algo():
             1 x domain.shape[0] array containing the optimal solution of the problem
         """
 
-        # TODO: enter your code here
-        raise NotImplementedError
+        xs = torch.linspace(domain[0,0], domain[0,1], steps=200).unsqueeze(dim=1)
+        mu_f, sigma_f = self.GP_f.predict(xs)
+        mu_v, sigma_v = self.GP_v.predict(xs)
+        valid_ind = (mu_v - sigma_v) > self.kappa
+        x_valid = xs[valid_ind]
+        x_opt = x_valid[mu_f[valid_ind].argmax()].squeeze()
+        return x_opt
 
 
 """ Toy problem to check code works as expected """
