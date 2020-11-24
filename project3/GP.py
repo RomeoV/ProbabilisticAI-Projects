@@ -40,7 +40,7 @@ class GP():
         return M_inv
 
 
-    def add_point_and_update_kernel_inverse(self, xstar, ystar, niters=2):
+    def add_point_and_update_kernel_inverse(self, xstar, ystar, niters=2, tol=1e-8):
         """ Adds point to GP and updates kernel inverse """
         # unpack
         sigma = self.sigma
@@ -63,8 +63,18 @@ class GP():
         xs = torch.cat((xs, xstar), dim=0)
         ys = torch.cat((ys, ystar), dim=0)
         M = kernel(xs, xs) + sigma**2 * I
+        nrmI = torch.norm(I)
+        #print(0, torch.norm(I - M_inv @ M) / nrmI)
         for i in range(niters):
             M_inv = M_inv @ (I + (I - M @ M_inv))
+            err = torch.norm(I - M_inv @ M) / nrmI
+            #print(i+1, err)
+            if err <= tol:
+                break
+        if err > tol:
+            M_inv = M.inverse()
+            err = torch.norm(I - M_inv @ M) / nrmI
+            #print(f"Recomputing inverse leads to error {err}.")
 
         # pack
         self.xs = xs
@@ -81,7 +91,7 @@ class GP():
         yA = self.ys
         K_AA_sigma2_inv = self.K_sigma2_inv
 
-        xstar = torch.tensor(xstar).unsqueeze(dim=0)
+        xstar = xstar.unsqueeze(dim=1)
 
         # predict
         k_xA = kernel(xstar, xA)

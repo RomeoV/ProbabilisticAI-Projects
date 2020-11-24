@@ -91,6 +91,7 @@ class BO_algo():
             Value of the acquisition function at x
         """
 
+        x = torch.tensor(x)
         mu_f, sigma_f = self.GP_f.predict(x)
         mu_v, sigma_v = self.GP_v.predict(x)
 
@@ -125,11 +126,16 @@ class BO_algo():
             1 x domain.shape[0] array containing the optimal solution of the problem
         """
 
-        xs = torch.linspace(domain[0,0], domain[0,1], steps=200).unsqueeze(dim=1)
-        mu_f, sigma_f = self.GP_f.predict(xs)
-        mu_v, sigma_v = self.GP_v.predict(xs)
+        xstar = torch.linspace(domain[0,0], domain[0,1], steps=200)
+        mu_f, sigma_f = self.GP_f.predict(xstar)
+        mu_v, sigma_v = self.GP_v.predict(xstar)
+        # docker hack
+        if (mu_v.ndim == 2 and mu_v.shape[1] == 1):
+            mu_v = mu_v.squeeze(1)
+        if (mu_f.ndim == 2 and mu_f.shape[1] == 1):
+            mu_f = mu_f.squeeze(1)
         valid_ind = (mu_v - sigma_v) > self.kappa
-        x_valid = xs[valid_ind]
+        x_valid = xstar[valid_ind]
         x_opt = x_valid[mu_f[valid_ind].argmax()].squeeze()
         return x_opt
 
