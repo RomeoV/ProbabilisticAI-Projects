@@ -105,7 +105,12 @@ class MLPActorCritic(nn.Module):
         #    3. The log-probability of the action under the policy output distribution
         # Hint: This function is only called during inference. You should use
         # `torch.no_grad` to ensure that it does not interfer with the gradient computation.
-        return 0, 0, 0
+        with torch.no_grad():
+            pi, _ = self.pi.forward(state)
+            a = pi.sample()
+            _, log_p = self.pi.forward(state, a)
+            v = self.v.forward(state)
+        return a.item(), v, log_p
 
     def act(self, state):
         return self.step(state)[0]
@@ -159,7 +164,15 @@ class VPGBuffer:
         # Hint: we do the discounting for you, you just need to compute 'deltas'.
         # see the handout for more info
         # deltas = rews[:-1] + ...
-        deltas = rews[:-1]
+        deltas_torch = np.zeros((rews.shape[0]-1,))
+        for i, (r, v, v_) in enumerate(zip(rews[:-1], vals[:-1], vals[1:])):
+            deltas_torch[i] = r + v_ - v
+        deltas = rews[:-1] + vals[1:] - vals[:-1]
+        # for i in path_slice:
+        #     deltas[i] = rews[i] + vals[i+1] - vals[i]
+        #deltas = np.append(deltas, rews[-1] + last_val - vals[-1])
+        assert max(abs(deltas - deltas_torch)) < 1e-5, f"{torch.tensor(deltas) - deltas_torch}"
+
         self.tdres_buf[path_slice] = discount_cumsum(deltas, self.gamma*self.lam)
 
         #TODO: compute the discounted rewards-to-go. Hint: use the discount_cumsum function
@@ -176,7 +189,7 @@ class VPGBuffer:
         self.ptr, self.path_start_idx = 0, 0
 
         # TODO: Normalize the TD-residuals in self.tdres_buf
-        self.tdres_buf = self.tdres_buf
+        self.tdres_buf = (self.tdres_buf - self.tdres_buf.mean()) / self.tdres_buf.std()
 
         data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf,
                     tdres=self.tdres_buf, logp=self.logp_buf)
@@ -235,8 +248,9 @@ class Agent:
         # Main training loop: collect experience in env and update / log each epoch
         for epoch in range(epochs):
             ep_returns = []
+            N_traj = 0
             for t in range(steps_per_epoch):
-                a, v, logp = self.ac.step(torch.as_tensor(state, dtype=torch.float32))
+                a, v, logp = self.ac.step(torch.as_tensor(state, dtype=torch.float32))  # action, estimated value, log probability
 
                 next_state, r, terminal = self.env.transition(a)
                 ep_ret += r
@@ -260,6 +274,7 @@ class Agent:
                     if timeout or terminal:
                         ep_returns.append(ep_ret)  # only store return when episode ended
                     buf.end_traj(v)
+                    N_traj += 1
                     state, ep_ret, ep_len = self.env.reset(), 0, 0
 
             mean_return = np.mean(ep_returns) if len(ep_returns) > 0 else np.nan
@@ -267,22 +282,33 @@ class Agent:
 
             # This is the end of an epoch, so here is where you likely want to update
             # the policy and / or value function.
-            # TODO: Implement the polcy and value function update. Hint: some of the torch code is
+            # TODO: Implement the policy and value function update. Hint: some of the torch code is
             # done for you.
 
             data = buf.get()
 
-            #Do 1 policy gradient update
-            pi_optimizer.zero_grad() #reset the gradient in the policy optimizer
+            # Do 1 policy gradient update
+            pi_optimizer.zero_grad() # reset the gradient in the policy optimizer
 
-            #Hint: you need to compute a 'loss' such that its derivative with respect to the policy
-            #parameters is the policy gradient. Then call loss.backwards() and pi_optimizer.step()
+            _, logp = self.ac.pi(data['obs'], data['act'])
+            loss_pi = -(data['tdres'] * logp).sum()/N_traj
 
-            #We suggest to do 100 iterations of value function updates
+            loss_pi.backward()
+            pi_optimizer.step()
+
+            # Hint: you need to compute a 'loss' such that its derivative with respect to the policy
+            # parameters is the policy gradient. Then call loss.backwards() and pi_optimizer.step()
+
+            # We suggest to do 100 iterations of value function updates
             for _ in range(100):
                 v_optimizer.zero_grad()
-                #compute a loss for the value function, call loss.backwards() and then
-                #v_optimizer.step()
+                
+                values = self.ac.v(data['obs'])
+                loss_v = (values - data['tdres']).pow(2).sum()
+                loss_v.backward()
+
+                # compute a loss for the value function, call loss.backwards() and then
+                v_optimizer.step()
 
 
         return True
@@ -297,7 +323,8 @@ class Agent:
         """
         # TODO: Implement this function.
         # Currently, this just returns a random action.
-        return np.random.choice([0, 1, 2, 3])
+        act = self.ac.pi.forward(obs).argmax()
+        return act
 
 
 def main():
