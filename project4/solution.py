@@ -323,7 +323,8 @@ class Agent:
         """
         # TODO: Implement this function.
         # Currently, this just returns a random action.
-        act = self.ac.pi.forward(obs).argmax()
+        # act = self.ac.pi(obs).argmax()
+        act = self.ac.pi(torch.from_numpy(obs).float())[0].logits.argmax()
         return act
 
 
