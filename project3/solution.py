@@ -276,7 +276,7 @@ def plot_agent(agent, fig_axes=None):
         l6 = ax1.vlines(x_next, ymin=f_next-0.3, ymax=f_next+0.3, colors='r')
         # ax1.legend()
         ax1.legend((l1, l2, l3, l4, l5, l6), ('Ground truth', 'Mean', 'Mean + std', 'Mean - std', 'Sample points', 'Next sample'))
-        ax1.set_title("f", fontsize=16)
+        ax1.set_title(r"$f(x)$", fontsize=16)
         if x_best.size() > torch.Size([0]):
             ax1.annotate("Best", (x_best, f_best.squeeze()), xytext=(-80, 80), textcoords='offset pixels', arrowprops={'arrowstyle': '->'})
 
@@ -302,9 +302,9 @@ def plot_agent(agent, fig_axes=None):
             ax2.annotate("Best", (x_best, v_best.squeeze()), xytext=(80, 80), textcoords='offset pixels', arrowprops={'arrowstyle': '->'})
         l5 = ax2.scatter(agent.GP_v.xs, agent.GP_v.ys, marker='*', c='black', zorder=100)
         ax2.legend((l1, l2, l3, l4, l5, l6), ('Ground truth', 'Mean', 'Mean + std', 'Mean - std', 'Sample points', 'Next sample'))
-        ax2.set_title("v", fontsize=16)
+        ax2.set_title(r"$g(x)$", fontsize=16)
 
-        plt.gcf().suptitle(r"Find $\mathrm{argmax}_x f(x)$ satisfying $v(x) > \kappa$", fontsize=16)
+        plt.gcf().suptitle(r"Find $\mathrm{argmax}_x f(x)$ satisfying $g(x) > \kappa$", fontsize=16)
 
         plt.tight_layout()
         # plt.show()
