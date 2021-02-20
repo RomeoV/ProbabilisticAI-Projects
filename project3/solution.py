@@ -142,7 +142,7 @@ class BO_algo:
             1 x domain.shape[0] array containing the optimal solution of the problem
         """
 
-        xstar = torch.linspace(domain[0,0], domain[0,1], steps=200)
+        xstar = torch.linspace(domain[0, 0], domain[0, 1], steps=1000)
         mu_f, sigma_f = self.GP_f.predict(xstar)
         mu_v, sigma_v = self.GP_v.predict(xstar)
         # docker hack
