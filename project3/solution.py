@@ -7,6 +7,8 @@ from sklearn.gaussian_process.kernels import Matern
 import torch
 from typing import Tuple
 from GP import GP
+from celluloid import Camera
+import matplotlib.pyplot as plt
 
 domain = np.array([[0, 5]])
 domain_t = torch.tensor(domain)
@@ -151,6 +153,8 @@ class BO_algo:
         if (mu_f.ndim == 2 and mu_f.shape[1] == 1):
             mu_f = mu_f.squeeze(1)
         valid_ind = (mu_v - sigma_v) > self.kappa
+        if sum(valid_ind) == 0:
+            return torch.tensor([]).double()
         x_valid = xstar[valid_ind]
         x_opt = x_valid[mu_f[valid_ind].argmax()].squeeze()
         return x_opt
@@ -172,10 +176,14 @@ def f(x):
 
 def v(x):
     """Dummy speed"""
-    return (x*np.cos(x)).squeeze()
+    return (x*np.cos(x)).squeeze()+1.2
     #return 2.0
 
-def train_agent(agent, n_iters=20, debug=False):
+def train_agent(agent, n_iters=16, debug=False, create_animation=False):
+    if create_animation:
+        fig, axes = plt.subplots(1,2)
+        camera = Camera(fig)
+
     # Loop until budget is exhausted
     for j in range(n_iters):
         # Get next recommendation
@@ -191,6 +199,9 @@ def train_agent(agent, n_iters=20, debug=False):
         obj_val = f(x)
         cost_val = v(x)
         agent.add_data_point(x, obj_val, cost_val)
+        if create_animation:
+            plot_agent(agent, (fig, axes))
+            camera.snap()
         if debug:
             M1f = agent.Kf_AA_sig2_inv
             xs = agent.xs
@@ -200,6 +211,10 @@ def train_agent(agent, n_iters=20, debug=False):
             xs = agent.xs
             M2v = (agent.Matern_v(xs, xs) + agent.σ_v**2 * torch.eye(xs.shape[0])).inverse()
             print(f"F/V-error: {(M1f - M2f).abs().sum().item():.2E}, {(M1v - M2v).abs().sum().item():.2E}")
+
+    if create_animation:
+        animation = camera.animate(interval=750)
+        animation.save('animation.mp4')
 
 
     # Validate solution
@@ -220,46 +235,87 @@ def train_agent(agent, n_iters=20, debug=False):
     print(f'Optimal value: 0\nProposed solution {solution}\nSolution value '
           f'{f(solution)}\nRegret{regret}')
 
-def plot_agent(agent, ax=None):
+def plot_agent(agent, fig_axes=None):
     try:
         import matplotlib.pyplot as plt
-        if ax == None:
-            fig, (ax1, ax2) = plt.subplots(1,2)
+        from matplotlib.patches import Rectangle
+        import matplotlib as mpl
+        plt.rcParams.update({
+            "text.usetex": True,
+            # "font.family": "sans-serif",
+            # "font.sans-serif": ["Helvetica"]
+            })
+        if fig_axes == None:
+            fig, (ax1, ax2) = fig.subplots(1,2)
+            fig = plt.figure()
+        else:
+            fig, (ax1, ax2) = fig_axes
+
         xs = torch.linspace(0,5)
         x_best = agent.get_solution()
+        if x_best.size() == torch.Size([0]):
+            f_best = torch.tensor([])
+            v_best = torch.tensor([])
+        else:
+            f_best, _ = agent.GP_f.predict(x_best.unsqueeze(0))
+            v_best, _ = agent.GP_v.predict(x_best.unsqueeze(0))
+
+        x_next = torch.from_numpy(agent.next_recommendation()).squeeze(0)
+        f_next, _ = agent.GP_f.predict(x_next)
+        v_next, _ = agent.GP_v.predict(x_next)
 
         # Plot f
         ys = np.array(list(map(f, xs)))
-        mus, sigs = agent.get_mu_sigma_f(xs.unsqueeze(1))
-        ax1.plot(xs, ys, label="GT")
-        ax1.plot(xs, mus, '--', label="Mean")
-        ax1.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
-        ax1.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
-        ax1.scatter(agent.xs, agent.fs, label="Sample points")
-        ax1.vlines(x_best, ymin=agent.κ-0.3, ymax=agent.κ+0.3, colors='r')
-        ax1.legend()
+        mus, sigs = agent.GP_f.predict(xs)
+        l1, = ax1.plot(xs, ys, c='tab:blue')
+        l2, = ax1.plot(xs, mus, '--', c='tab:orange')
+        l3, = ax1.plot(xs, mus+sigs, '-.', c='g', linewidth=0.4)
+        l4, = ax1.plot(xs, mus-sigs, '-.', c='g', linewidth=0.4)
+        ax1.fill_between(xs, mus-sigs, mus+sigs, color='g', alpha=0.3)
+        l5 = ax1.scatter(agent.GP_f.xs, agent.GP_f.ys, marker='*', c='black', zorder=100)
+        l6 = ax1.vlines(x_next, ymin=f_next-0.3, ymax=f_next+0.3, colors='r')
+        # ax1.legend()
+        ax1.legend((l1, l2, l3, l4, l5, l6), ('Ground truth', 'Mean', 'Mean + std', 'Mean - std', 'Sample points', 'Next sample'))
         ax1.set_title("f", fontsize=16)
+        if x_best.size() > torch.Size([0]):
+            ax1.annotate("Best", (x_best, f_best.squeeze()), xytext=(-80, 80), textcoords='offset pixels', arrowprops={'arrowstyle': '->'})
 
         # Plot v
         ys = np.array(list(map(v, xs)))
-        mus, sigs = agent.get_mu_sigma_v(xs.unsqueeze(1))
-        ax2.plot(xs, ys, label="GT")
-        ax2.plot(xs, mus, '--', label="Mean")
-        ax2.plot(xs, mus+sigs, '-.', c='g', label="Mean + std")
-        ax2.plot(xs, mus-sigs, '-.', c='g', label="Mean - std")
-        ax2.hlines(agent.κ, xmin=domain[0,0], xmax=domain[0,1])
-        ax2.vlines(x_best, ymin=agent.κ-0.3, ymax=agent.κ+0.3, colors='r')
-        ax2.scatter(agent.xs, agent.vs, label="Sample points")
-        ax2.legend()
+        mus, sigs = agent.GP_v.predict(xs)
+        l1, = ax2.plot(xs, ys, c='tab:blue')
+        l2, = ax2.plot(xs, mus, '--', c='tab:orange')
+        l3, = ax2.plot(xs, mus+sigs,  c='g', linewidth=0.4)
+        l4, = ax2.plot(xs, mus-sigs,  c='g', linewidth=0.4)
+        ax2.fill_between(xs, mus-sigs, mus+sigs, color='g', alpha=0.3)
+        ax2.hlines(agent.kappa, xmin=domain[0,0]-0.1, xmax=domain[0,1]+0.1, colors='dimgray')
+        ax2.add_patch(
+                Rectangle((-0.1, agent.kappa), 5.2, 2, color='g', alpha=0.2, zorder=0.1)
+                )
+        ax2.add_patch(
+                Rectangle((-0.1, agent.kappa-4), 5.2, 4, color='r', alpha=0.2, zorder=0.1)
+                )
+        # ax2.annotate("valid", (1.7, agent.kappa), xytext=(0,40), textcoords='offset pixels', arrowprops={'arrowstyle': '<-'})
+        # ax2.vlines(x_best, ymin=agent.kappa-0.3, ymax=agent.kappa+0.3, colors='r')
+        l6 = ax2.vlines(x_next, ymin=v_next-0.3, ymax=v_next+0.3, colors='r')
+        if x_best.size() > torch.Size([0]):
+            ax2.annotate("Best", (x_best, v_best.squeeze()), xytext=(80, 80), textcoords='offset pixels', arrowprops={'arrowstyle': '->'})
+        l5 = ax2.scatter(agent.GP_v.xs, agent.GP_v.ys, marker='*', c='black', zorder=100)
+        ax2.legend((l1, l2, l3, l4, l5, l6), ('Ground truth', 'Mean', 'Mean + std', 'Mean - std', 'Sample points', 'Next sample'))
         ax2.set_title("v", fontsize=16)
+
+        plt.gcf().suptitle(r"Find $\mathrm{argmax}_x f(x)$ satisfying $v(x) > \kappa$", fontsize=16)
+
+        plt.tight_layout()
+        # plt.show()
     except ImportError:
         pass
 
 def main():
     # Init problem
     agent = BO_algo(on_docker=False)
-    train_agent(agent, debug=True)
-    plot_agent(agent)
+    train_agent(agent, debug=False, create_animation=True)
+    # plot_agent(agent)
 
 if __name__ == "__main__":
     main()
